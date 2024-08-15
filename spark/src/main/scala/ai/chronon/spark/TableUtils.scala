@@ -83,9 +83,11 @@ case class TableUtils(sparkSession: SparkSession) {
   val aggregationParallelism: Int = sparkSession.conf.get("spark.chronon.group_by.parallelism", "1000").toInt
   val maxWait: Int = sparkSession.conf.get("spark.chronon.wait.hours", "48").toInt
 
+  val sqlFormat: String = sparkSession.conf.get("spark.chronon.sql.format", "hive")
+  
   sparkSession.sparkContext.setLogLevel("ERROR")
   // converts String-s like "a=b/c=d" to Map("a" -> "b", "c" -> "d")
-
+  
   def preAggRepartition(df: DataFrame): DataFrame =
     if (df.rdd.getNumPartitions < aggregationParallelism) {
       df.repartition(aggregationParallelism)
@@ -304,7 +306,7 @@ case class TableUtils(sparkSession: SparkSession) {
       df
     }
 
-    if (!tableExists(tableName)) {
+    if (!tableExists(tableName) && sqlFormat != "bigquery") {
       val creationSql = createTableSql(tableName, dfRearranged.schema, partitionColumns, tableProperties, fileFormat)
       try {
         sql(creationSql)
@@ -359,7 +361,11 @@ case class TableUtils(sparkSession: SparkSession) {
       s"\n----[Running query coalesced into at most $partitionCount partitions]----\n$query\n----[End of Query]----\n\n Query call path (not an error stack trace): \n$stackTraceStringPretty \n\n --------")
     try {
       // Run the query
-      val df = sparkSession.sql(query).coalesce(partitionCount)
+      val df: DataFrame = if (sqlFormat != "bigquery") {
+        sparkSession.sql(query).coalesce(partitionCount)
+      } else {
+        sparkSession.read.format("bigquery").option("query", query).load().coalesce(partitionCount)
+      }
       df
     } catch {
       case e: AnalysisException if e.getMessage.contains(" already exists") =>
@@ -497,14 +503,26 @@ case class TableUtils(sparkSession: SparkSession) {
           (Seq(partitionColumn, saltCol), Seq(partitionColumn) ++ sortByCols)
         } else { (Seq(saltCol), sortByCols) }
       logger.info(s"Sorting within partitions with cols: $partitionSortCols")
-      saltedDf
-        .repartition(shuffleParallelism, repartitionCols.map(saltedDf.col): _*)
-        .drop(saltCol)
-        .sortWithinPartitions(partitionSortCols.map(col): _*)
-        .write
-        .mode(saveMode)
-        .insertInto(tableName)
-      logger.info(s"Finished writing to $tableName")
+      
+      val repartitionedDf = saltedDf
+          .repartition(shuffleParallelism, repartitionCols.map(saltedDf.col): _*)
+          .drop(saltCol)
+          .sortWithinPartitions(partitionSortCols.map(col): _*)
+
+      if(sqlFormat == "bigquery") {
+        repartitionedDf
+          .write
+          .format("bigquery")
+          .option("temporaryGcsBucket","chronon-tmp")
+          .mode(saveMode)
+          .save(tableName)
+      }
+      else {
+        repartitionedDf
+          .write
+          .mode(saveMode)
+          .insertInto(tableName)
+      }
     }
   }
 
@@ -529,10 +547,19 @@ case class TableUtils(sparkSession: SparkSession) {
     val partitionFragment = if (partitionColumns != null && partitionColumns.nonEmpty) {
       val partitionDefinitions = schema
         .filter(field => partitionColumns.contains(field.name))
-        .map(field => s"${field.name} ${field.dataType.catalogString}")
-      s"""PARTITIONED BY (
-         |    ${partitionDefinitions.mkString(",\n    ")}
-         |)""".stripMargin
+        .map(field => s"${field.name} ")
+      
+      if(sqlFormat == "bigquery") {
+        s"""PARTITION BY (
+           |    ${partitionDefinitions.mkString(",\n    ")}
+           |)""".stripMargin
+      }
+      else {
+        s"""PARTITIONED BY (
+           |    ${partitionDefinitions.mkString(",\n    ")}
+           |)""".stripMargin
+      }
+      
     } else {
       ""
     }
@@ -543,7 +570,7 @@ case class TableUtils(sparkSession: SparkSession) {
     } else {
       ""
     }
-    val fileFormatString = if (useIceberg) {
+    val fileFormatString = if (useIceberg || sqlFormat == "bigquery") {
       ""
     } else {
       s"STORED AS $fileFormat"
