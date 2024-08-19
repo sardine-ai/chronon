@@ -83,9 +83,14 @@ case class TableUtils(sparkSession: SparkSession) {
   val aggregationParallelism: Int = sparkSession.conf.get("spark.chronon.group_by.parallelism", "1000").toInt
   val maxWait: Int = sparkSession.conf.get("spark.chronon.wait.hours", "48").toInt
 
-  val sqlFormat: String = sparkSession.conf.get("spark.chronon.sql.format", "hive")
+  val sqlFormat: String = sparkSession.conf.get("spark.chronon.sql.format", "parquet")
   
   sparkSession.sparkContext.setLogLevel("ERROR")
+
+  if(sqlFormat == "bigquery") {
+    sparkSession.conf.set("materializationDataset", sparkSession.conf.get("spark.materializationDataset"))
+    sparkSession.conf.set("viewsEnabled", "true")
+  }
   // converts String-s like "a=b/c=d" to Map("a" -> "b", "c" -> "d")
   
   def preAggRepartition(df: DataFrame): DataFrame =
@@ -111,7 +116,18 @@ case class TableUtils(sparkSession: SparkSession) {
       .toMap
   }
 
-  def tableExists(tableName: String): Boolean = sparkSession.catalog.tableExists(tableName)
+  def tableExists(tableName: String): Boolean = {
+    try {
+      getSchemaFromTable(tableName)
+      true
+    } catch {
+      case e: Exception => {
+        logger.info(s"Error message received when trying to get schema from table $tableName")
+        logger.info(s"Assuming table $tableName does not exist")
+        false
+      }
+    }
+  }
 
   def loadEntireTable(tableName: String): DataFrame = sparkSession.table(tableName)
 
@@ -167,6 +183,11 @@ case class TableUtils(sparkSession: SparkSession) {
       }
       return getIcebergPartitions(tableName)
     }
+
+    if(sqlFormat == "bigquery") {
+      return getBigQueryPartitions(tableName, subPartitionsFilter, partitionColumn)
+    }
+    
     sparkSession.sqlContext
       .sql(s"SHOW PARTITIONS $tableName")
       .collect()
@@ -219,6 +240,29 @@ case class TableUtils(sparkSession: SparkSession) {
     }
   }
 
+  private def getBigQueryPartitions(tableName: String, subPartitionsFilter: Map[String, String] = Map.empty, partitionColumn: String = "ds"): Seq[String] = {
+    val dataset = tableName.split("\\.")(0)
+    val tableNameSuffix = tableName.split("\\.")(1)
+
+    val getPartitionsSql = s"""SELECT CAST(PARSE_DATE('%Y%m%d', partition_id) AS STRING) as $partitionColumn
+                           | FROM $dataset.INFORMATION_SCHEMA.PARTITIONS
+                           | WHERE TABLE_SCHEMA = '$dataset'
+                           | AND TABLE_NAME = '$tableNameSuffix'
+                           | AND partition_id != '__NULL__'
+                           | ORDER BY partition_id""".stripMargin
+
+    logger.info(s"getPartitionsSql: $getPartitionsSql")
+    val partitionsDf = sparkSession.read.format("bigquery").option("query", getPartitionsSql).load()
+    
+    logger.info(s"Detected ${partitionsDf.count()} partitions for table $tableName")
+
+    partitionsDf
+      .select(partitionColumn)
+      .collect()
+      .map(_.getString(0))
+      .toSeq
+  }
+
   // Given a table and a query extract the schema of the columns involved as input.
   def getColumnsFromQuery(query: String): Seq[String] = {
     val parser = sparkSession.sessionState.sqlParser
@@ -254,7 +298,8 @@ case class TableUtils(sparkSession: SparkSession) {
   }
 
   def getSchemaFromTable(tableName: String): StructType = {
-    sparkSession.sql(s"SELECT * FROM $tableName LIMIT 1").schema
+    val query = s"SELECT * FROM $tableName LIMIT 1"
+    sparkSession.read.format(sqlFormat).option("query", query).load().schema
   }
 
   // method to check if a user has access to a table
@@ -265,7 +310,8 @@ case class TableUtils(sparkSession: SparkSession) {
     try {
       // retrieve one row from the table
       val partitionFilter = lastAvailablePartition(tableName).getOrElse(fallbackPartition)
-      sparkSession.sql(s"SELECT * FROM $tableName where $partitionColumn='$partitionFilter' LIMIT 1").collect()
+      val query = s"SELECT * FROM $tableName where $partitionColumn='$partitionFilter' LIMIT 1"
+      sparkSession.read.format(sqlFormat).option("query", query).load().collect()
       true
     } catch {
       case e: SparkException =>
@@ -306,7 +352,13 @@ case class TableUtils(sparkSession: SparkSession) {
       df
     }
 
-    if (!tableExists(tableName) && sqlFormat != "bigquery") {
+    // currently we don't issue DDL statements for BigQuery
+    // we let spark automatically update schemas
+    if (sqlFormat == "bigquery") {
+      return repartitionAndWrite(dfRearranged, tableName, saveMode, stats, sortByCols)
+    }
+
+    if (!tableExists(tableName)) {
       val creationSql = createTableSql(tableName, dfRearranged.schema, partitionColumns, tableProperties, fileFormat)
       try {
         sql(creationSql)
@@ -361,11 +413,7 @@ case class TableUtils(sparkSession: SparkSession) {
       s"\n----[Running query coalesced into at most $partitionCount partitions]----\n$query\n----[End of Query]----\n\n Query call path (not an error stack trace): \n$stackTraceStringPretty \n\n --------")
     try {
       // Run the query
-      val df: DataFrame = if (sqlFormat != "bigquery") {
-        sparkSession.sql(query).coalesce(partitionCount)
-      } else {
-        sparkSession.read.format("bigquery").option("query", query).load().coalesce(partitionCount)
-      }
+      val df = sparkSession.read.format(sqlFormat).option("query", query).load().coalesce(partitionCount)
       df
     } catch {
       case e: AnalysisException if e.getMessage.contains(" already exists") =>
@@ -510,10 +558,15 @@ case class TableUtils(sparkSession: SparkSession) {
           .sortWithinPartitions(partitionSortCols.map(col): _*)
 
       if(sqlFormat == "bigquery") {
-        repartitionedDf
+
+        val bigqueryDf = repartitionedDf.withColumn(partitionColumn, to_date(col(partitionColumn), partitionFormat))
+
+        bigqueryDf
           .write
           .format("bigquery")
           .option("temporaryGcsBucket","chronon-tmp")
+          .option("partitionField", partitionColumn)
+          .option("partitionType", "DAY")
           .mode(saveMode)
           .save(tableName)
       }
