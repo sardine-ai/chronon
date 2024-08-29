@@ -599,9 +599,10 @@ case class TableUtils(sparkSession: SparkSession) {
         bigqueryDf
           .write
           .format("bigquery")
-          .option("temporaryGcsBucket","chronon-tmp")
-          .option("partitionField", partitionColumn)
-          .option("partitionType", "DAY")
+//          .option("temporaryGcsBucket","chronon-tmp")
+          .option("writeMethod", "direct")
+//          .option("partitionField", partitionColumn)
+//          .option("partitionType", "DAY")
           .mode(saveMode)
           .save(tableName)
       }
