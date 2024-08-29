@@ -335,6 +335,19 @@ case class TableUtils(sparkSession: SparkSession) {
   def firstAvailablePartition(tableName: String, subPartitionFilters: Map[String, String] = Map.empty): Option[String] =
     partitions(tableName, subPartitionFilters).reduceOption((x, y) => Ordering[String].min(x, y))
 
+  def createBigQueryTable(tableName: String, schema: StructType, partitionColumns: Seq[String]): Unit = {
+    logger.info("Creating bigquery table")
+    val df = sparkSession.createDataFrame(sparkSession.sparkContext.emptyRDD[Row], schema)
+
+    df.write
+      .format("bigquery")
+      .option("table", tableName)
+      .option("temporaryGcsBucket","chronon-tmp")
+      .option("partitionField", partitionColumn)
+      .option("partitionType", "DAY")
+      .save()
+  }
+
   def insertPartitions(df: DataFrame,
                        tableName: String,
                        tableProperties: Map[String, String] = null,
@@ -359,40 +372,57 @@ case class TableUtils(sparkSession: SparkSession) {
     }
 
     if (!tableExists(tableName)) {
-      val creationSql = createTableSql(tableName, dfRearranged.schema, partitionColumns, tableProperties, fileFormat)
-      try {
-        sql(creationSql)
-      } catch {
-        case _: TableAlreadyExistsException =>
-          logger.info(s"Table $tableName already exists, skipping creation")
-        case e: Exception =>
-          logger.error(s"Failed to create table $tableName", e)
-          throw e
+      if (sqlFormat == "bigquery") {
+        createBigQueryTable(tableName, dfRearranged.schema, partitionColumns)
+      }
+      else {
+        val creationSql = createTableSql(tableName, dfRearranged.schema, partitionColumns, tableProperties, fileFormat)
+        try {
+          sql(creationSql)
+        } catch {
+          case _: TableAlreadyExistsException =>
+            logger.info(s"Table $tableName already exists, skipping creation")
+          case e: Exception =>
+            logger.error(s"Failed to create table $tableName", e)
+            throw e
+        }
       }
     }
     if (tableProperties != null && tableProperties.nonEmpty) {
       alterTableProperties(tableName, tableProperties)
     }
 
-    if (autoExpand) {
-      expandTable(tableName, dfRearranged.schema)
-    }
+    // TODO: implement table properties in BigQuery
+    if (sqlFormat != "bigquery") {
+      if (tableProperties != null && tableProperties.nonEmpty) {
+        alterTableProperties(tableName, tableProperties)
+      }
 
-    val finalizedDf = if (autoExpand) {
-      // reselect the columns so that an deprecated columns will be selected as NULL before write
-      val updatedSchema = getSchemaFromTable(tableName)
-      val finalColumns = updatedSchema.fieldNames.map(fieldName => {
-        if (dfRearranged.schema.fieldNames.contains(fieldName)) {
-          col(fieldName)
-        } else {
-          lit(null).as(fieldName)
-        }
-      })
-      dfRearranged.select(finalColumns: _*)
-    } else {
-      // if autoExpand is set to false, and an inconsistent df is passed, we want to pass in the df as in
-      // so that an exception will be thrown below
-      dfRearranged
+      if (autoExpand) {
+        expandTable(tableName, dfRearranged.schema)
+      }
+
+      val finalizedDf = if (autoExpand) {
+        // reselect the columns so that an deprecated columns will be selected as NULL before write
+        val updatedSchema = getSchemaFromTable(tableName)
+        val finalColumns = updatedSchema.fieldNames.map(fieldName => {
+          if (dfRearranged.schema.fieldNames.contains(fieldName)) {
+            col(fieldName)
+          } else {
+            lit(null).as(fieldName)
+          }
+        })
+        dfRearranged.select(finalColumns: _*)
+      } else {
+        // if autoExpand is set to false, and an inconsistent df is passed, we want to pass in the df as in
+        // so that an exception will be thrown below
+        dfRearranged
+      }
+
+      repartitionAndWrite(finalizedDf, tableName, saveMode, stats, sortByCols)
+    }
+    else {
+      repartitionAndWrite(dfRearranged, tableName, saveMode, stats, sortByCols)
     }
     repartitionAndWrite(finalizedDf, tableName, saveMode, stats, sortByCols)
   }
@@ -432,7 +462,12 @@ case class TableUtils(sparkSession: SparkSession) {
                           fileFormat: String = "PARQUET"): Unit = {
 
     if (!tableExists(tableName)) {
-      sql(createTableSql(tableName, df.schema, Seq.empty[String], tableProperties, fileFormat))
+      if (sqlFormat == "bigquery") {
+        createBigQueryTable(tableName, df.schema, Seq.empty[String])
+      }
+      else {
+        sql(createTableSql(tableName, df.schema, Seq.empty[String], tableProperties, fileFormat))
+      }
     } else {
       if (tableProperties != null && tableProperties.nonEmpty) {
         alterTableProperties(tableName, tableProperties)
