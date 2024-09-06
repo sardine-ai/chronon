@@ -85,7 +85,7 @@ case class TableUtils(sparkSession: SparkSession) {
 
   val sqlFormat: String = sparkSession.conf.get("spark.chronon.sql.format", "parquet")
   
-  sparkSession.sparkContext.setLogLevel("ERROR")
+  sparkSession.sparkContext.setLogLevel("INFO")
 
   if(sqlFormat == "bigquery") {
     sparkSession.conf.set("materializationDataset", sparkSession.conf.get("spark.materializationDataset"))
@@ -551,7 +551,7 @@ case class TableUtils(sparkSession: SparkSession) {
 
       val totalFileCountEstimate = math.ceil(rowCount * columnSizeEstimate / rowCountPerPartition).toInt
       val dailyFileCountUpperBound = 2000
-      val dailyFileCountLowerBound = if (isLocal) 1 else 10
+      val dailyFileCountLowerBound = if (isLocal) 1 else 2
       val dailyFileCountEstimate = totalFileCountEstimate / nonZeroTablePartitionCount + 1
       val dailyFileCountBounded =
         math.max(math.min(dailyFileCountEstimate, dailyFileCountUpperBound), dailyFileCountLowerBound)
