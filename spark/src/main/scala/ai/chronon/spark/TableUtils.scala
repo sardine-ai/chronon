@@ -337,7 +337,9 @@ case class TableUtils(sparkSession: SparkSession) {
 
   def createBigQueryTable(tableName: String, schema: StructType, partitionColumns: Seq[String]): Unit = {
     logger.info("Creating bigquery table")
-    val df = sparkSession.createDataFrame(sparkSession.sparkContext.emptyRDD[Row], schema)
+    var df = sparkSession.createDataFrame(sparkSession.sparkContext.emptyRDD[Row], schema)
+
+    df = df.withColumn(partitionColumn, to_date(col(partitionColumn), partitionFormat))
 
     df.write
       .format("bigquery")
