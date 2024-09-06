@@ -367,12 +367,6 @@ case class TableUtils(sparkSession: SparkSession) {
       df
     }
 
-    // currently we don't issue DDL statements for BigQuery
-    // we let spark automatically update schemas
-    if (sqlFormat == "bigquery") {
-      return repartitionAndWrite(dfRearranged, tableName, saveMode, stats, sortByCols)
-    }
-
     if (!tableExists(tableName)) {
       if (sqlFormat == "bigquery") {
         createBigQueryTable(tableName, dfRearranged.schema, partitionColumns)
@@ -389,9 +383,6 @@ case class TableUtils(sparkSession: SparkSession) {
             throw e
         }
       }
-    }
-    if (tableProperties != null && tableProperties.nonEmpty) {
-      alterTableProperties(tableName, tableProperties)
     }
 
     // TODO: implement table properties in BigQuery
@@ -426,7 +417,6 @@ case class TableUtils(sparkSession: SparkSession) {
     else {
       repartitionAndWrite(dfRearranged, tableName, saveMode, stats, sortByCols)
     }
-    repartitionAndWrite(finalizedDf, tableName, saveMode, stats, sortByCols)
   }
 
   def sql(query: String): DataFrame = {
