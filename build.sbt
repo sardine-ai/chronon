@@ -228,7 +228,7 @@ lazy val api = project
           "com.novocode" % "junit-interface" % "0.11" % "test",
           "org.scalatest" %% "scalatest" % "3.2.15" % "test",
           "org.scalatestplus" %% "mockito-3-4" % "3.2.10.0" % "test",
-          "com.google.cloud" % "google-cloud-storage" % "1.113.15"
+          "com.google.cloud" % "google-cloud-storage" % "2.42.0"
         ),
   )
 
@@ -295,7 +295,8 @@ lazy val aggregator = project
     libraryDependencies ++=
       fromMatrix(scalaVersion.value, "spark-sql/provided") ++ Seq(
         "com.yahoo.datasketches" % "sketches-core" % "0.13.4",
-        "com.google.code.gson" % "gson" % "2.8.6"
+        "com.google.code.gson" % "gson" % "2.8.6",
+        "com.google.cloud" % "google-cloud-bigquery" % "2.42.2"
       )
   )
 
