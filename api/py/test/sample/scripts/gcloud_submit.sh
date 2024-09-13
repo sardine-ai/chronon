@@ -29,6 +29,7 @@ gcloud_command+="spark.chronon.backfill.validation.enabled=${ENABLE_VALIDATION:-
 gcloud_command+="spark.chronon.outputParallelismOverride=${OUTPUT_PARALLELISM:--1},"
 gcloud_command+="spark.chronon.rowCountPerPartition=${ROW_COUNT_PER_PARTITION:--1},"
 gcloud_command+="spark.chronon.sql.format=bigquery,"
+gcloud_command+="spark.chronon.redis.host=${REDIS_HOST:-localhost},"
 
 # BigQuery connector required attributes
 gcloud_command+="materializationDataset=${MATERIALIZATION_DATASET:-chronon_tmp},"

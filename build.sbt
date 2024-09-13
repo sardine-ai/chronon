@@ -296,7 +296,8 @@ lazy val aggregator = project
       fromMatrix(scalaVersion.value, "spark-sql/provided") ++ Seq(
         "com.yahoo.datasketches" % "sketches-core" % "0.13.4",
         "com.google.code.gson" % "gson" % "2.8.6",
-        "com.google.cloud" % "google-cloud-bigquery" % "2.42.2"
+        "com.google.cloud" % "google-cloud-bigquery" % "2.42.2",
+        "redis.clients" % "jedis" % "5.1.3"
       )
   )
 

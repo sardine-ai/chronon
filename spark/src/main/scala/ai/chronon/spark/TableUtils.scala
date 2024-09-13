@@ -40,6 +40,8 @@ import scala.collection.{Seq, mutable}
 import scala.collection.immutable
 import scala.concurrent.{ExecutionContext, ExecutionContextExecutor}
 import scala.util.{Failure, Success, Try}
+import redis.clients.jedis.Jedis
+import scala.jdk.CollectionConverters._
 
 case class TableUtils(sparkSession: SparkSession) {
   @transient lazy val logger = LoggerFactory.getLogger(getClass)
@@ -84,7 +86,9 @@ case class TableUtils(sparkSession: SparkSession) {
   val maxWait: Int = sparkSession.conf.get("spark.chronon.wait.hours", "48").toInt
 
   val sqlFormat: String = sparkSession.conf.get("spark.chronon.sql.format", "parquet")
-  
+
+  val redisHost: String = sparkSession.conf.get("spark.chronon.redis.host", "localhost")
+
   sparkSession.sparkContext.setLogLevel("INFO")
 
   if(sqlFormat == "bigquery") {
@@ -386,37 +390,33 @@ case class TableUtils(sparkSession: SparkSession) {
     }
 
     // TODO: implement table properties in BigQuery
-    if (sqlFormat != "bigquery") {
-      if (tableProperties != null && tableProperties.nonEmpty) {
-        alterTableProperties(tableName, tableProperties)
-      }
 
-      if (autoExpand) {
-        expandTable(tableName, dfRearranged.schema)
-      }
-
-      val finalizedDf = if (autoExpand) {
-        // reselect the columns so that an deprecated columns will be selected as NULL before write
-        val updatedSchema = getSchemaFromTable(tableName)
-        val finalColumns = updatedSchema.fieldNames.map(fieldName => {
-          if (dfRearranged.schema.fieldNames.contains(fieldName)) {
-            col(fieldName)
-          } else {
-            lit(null).as(fieldName)
-          }
-        })
-        dfRearranged.select(finalColumns: _*)
-      } else {
-        // if autoExpand is set to false, and an inconsistent df is passed, we want to pass in the df as in
-        // so that an exception will be thrown below
-        dfRearranged
-      }
-
-      repartitionAndWrite(finalizedDf, tableName, saveMode, stats, sortByCols)
+    if (tableProperties != null && tableProperties.nonEmpty) {
+      alterTableProperties(tableName, tableProperties)
     }
-    else {
-      repartitionAndWrite(dfRearranged, tableName, saveMode, stats, sortByCols)
+
+    if (autoExpand && sqlFormat != "bigquery") {
+      expandTable(tableName, dfRearranged.schema)
     }
+
+    val finalizedDf = if (autoExpand) {
+      // reselect the columns so that an deprecated columns will be selected as NULL before write
+      val updatedSchema = getSchemaFromTable(tableName)
+      val finalColumns = updatedSchema.fieldNames.map(fieldName => {
+        if (dfRearranged.schema.fieldNames.contains(fieldName)) {
+          col(fieldName)
+        } else {
+          lit(null).as(fieldName)
+        }
+      })
+      dfRearranged.select(finalColumns: _*)
+    } else {
+      // if autoExpand is set to false, and an inconsistent df is passed, we want to pass in the df as in
+      // so that an exception will be thrown below
+      dfRearranged
+    }
+
+    repartitionAndWrite(finalizedDf, tableName, saveMode, stats, sortByCols)
   }
 
   def sql(query: String): DataFrame = {
@@ -660,15 +660,36 @@ case class TableUtils(sparkSession: SparkSession) {
   }
 
   def alterTableProperties(tableName: String, properties: Map[String, String]): Unit = {
-    // Only SQL api exists for setting TBLPROPERTIES
-    val propertiesString = properties
-      .map {
-        case (key, value) =>
-          s"'$key' = '$value'"
+    if (sqlFormat == "bigquery") alterTablePropertiesRedis(tableName, properties)
+    else {
+      // Only SQL api exists for setting TBLPROPERTIES
+      val propertiesString = properties
+        .map {
+          case (key, value) =>
+            s"'$key' = '$value'"
+        }
+        .mkString(", ")
+      val query = s"ALTER TABLE $tableName SET TBLPROPERTIES ($propertiesString)"
+      sql(query)
+    }
+  }
+
+  def alterTablePropertiesRedis(tableName: String, properties: Map[String, String]): Unit = {
+    logger.info(s"Altering table properties with Redis, host: $redisHost")
+
+    val redisPort = 6379
+    val jedis = new Jedis(redisHost, redisPort)
+
+    try {
+      properties.foreach { case (key, value) =>
+        jedis.hset(tableName, key, value)
       }
-      .mkString(", ")
-    val query = s"ALTER TABLE $tableName SET TBLPROPERTIES ($propertiesString)"
-    sql(query)
+      println(s"Properties for table $tableName have been saved to Redis.")
+    } catch {
+      case e: Exception => println(s"An error occurred while saving to Redis: ${e.getMessage}")
+    } finally {
+      jedis.close()
+    }
   }
 
   def chunk(partitions: Set[String]): Seq[PartitionRange] = {
@@ -747,11 +768,37 @@ case class TableUtils(sparkSession: SparkSession) {
   }
 
   def getTableProperties(tableName: String): Option[Map[String, String]] = {
+    if (sqlFormat == "bigquery") getTablePropertiesRedis(tableName)
+    else {
+      try {
+        val tableId = sparkSession.sessionState.sqlParser.parseTableIdentifier(tableName)
+        Some(sparkSession.sessionState.catalog.getTempViewOrPermanentTableMetadata(tableId).properties)
+      } catch {
+        case _: Exception => None
+      }
+    }
+  }
+
+  def getTablePropertiesRedis(tableName: String): Option[Map[String, String]] = {
+    logger.info(s"Getting table properties with redis for table $tableName, redis host: $redisHost")
+
+    val redisPort = 6379
+    val jedis = new Jedis(redisHost, redisPort)
+
     try {
-      val tableId = sparkSession.sessionState.sqlParser.parseTableIdentifier(tableName)
-      Some(sparkSession.sessionState.catalog.getTempViewOrPermanentTableMetadata(tableId).properties)
+      val redisData = jedis.hgetAll(tableName)
+
+      if (redisData.isEmpty) {
+        None
+      } else {
+        Some(redisData.asScala.toMap)
+      }
     } catch {
-      case _: Exception => None
+      case e: Exception =>
+        println(s"An error occurred while fetching from Redis: ${e.getMessage}")
+        None
+    } finally {
+      jedis.close()
     }
   }
 
