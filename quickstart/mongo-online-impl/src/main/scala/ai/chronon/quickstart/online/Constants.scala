@@ -8,4 +8,9 @@ object Constants {
   val mongoTs = "ts"
   val mongoDatabase = "chronon"
   val mongoLoggingCollection = "logging"
+  val bigtableKey = "keyBytes"
+  val bigtableValue = "valueBytes"
+  val bigtableTs = "ts"
+  val bigtableDatabase = "chronon"
+  val bigtableLoggingCollection = "logging"
 }
