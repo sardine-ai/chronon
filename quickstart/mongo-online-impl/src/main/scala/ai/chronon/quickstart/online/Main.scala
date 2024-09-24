@@ -9,19 +9,15 @@ import scala.util.{Failure, Success}
 
 object Main {
   def main(args: Array[String]): Unit = {
-    val myParams: Map[String, String] = Map("project_id" -> "indigo-computer-272415", "instance_id" -> "data-features", "log_table" -> "chronon.logs")
+    val myParams: Map[String, String] = Map("project_id" -> "indigo-computer-272415", "instance_id" -> "data-features")
     val api = new ChrononBigtableOnlineImpl(myParams)
     api.setTimeout(10000000)
 
-    // Build fetcher
     val fetcher = api.buildFetcher(debug=true)
 
-    // Fetch values
-//    fetcher.fetchGroupBys(Seq(Request(name = "crn/txns.gby_payment_method", keys = Map("payment_method_type" -> "bank"))))
-    val req = Request(name = "crn.txns.gby_payment_method", keys = Map("payment_method_type" -> "card"), atMillis = Some(1727186000000L))
+//    val req = Request(name = "crn.txns.gby_payment_method", keys = Map("payment_method_type" -> "card"), atMillis = Some(1726531200000L))
+    val req = Request(name = "crn.txns.gby_payment_method", keys = Map("payment_method_type" -> "bank"))
     val responseFuture = fetcher.fetchGroupBys(Seq(req))
-//
-//    val response = Await.result(responseFuture, 10.seconds)
 
     responseFuture.onComplete({
       case Success(listInt) => {

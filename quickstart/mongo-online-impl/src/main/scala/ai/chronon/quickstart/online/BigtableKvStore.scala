@@ -27,7 +27,7 @@ class BigtableKvStore(projectId: String, instanceId: String) extends KVStore {
   override def create(dataset: String): Unit = {
     if (!adminClient.exists(dataset)) {
       val createTableRequest = CreateTableRequest.of(dataset)
-        .addFamily("data", GCRules.GCRULES.maxVersions(1))
+        .addFamily(Constants.bigtableColumnFamily, GCRules.GCRULES.maxVersions(1))
 
       adminClient.createTable(createTableRequest)
     } else {
@@ -43,7 +43,7 @@ class BigtableKvStore(projectId: String, instanceId: String) extends KVStore {
         if (row == null) {
           GetResponse(request, Failure(new NoSuchElementException("Key not found")))
         } else {
-          val value = row.getCells("data", "value_bytes").get(0).getValue.toByteArray
+          val value = row.getCells(Constants.bigtableColumnFamily, Constants.bigtableValue).get(0).getValue.toByteArray
           GetResponse(request, Try(Seq(TimedValue(value, System.currentTimeMillis()))))
         }
       }
@@ -56,8 +56,8 @@ class BigtableKvStore(projectId: String, instanceId: String) extends KVStore {
       Future {
         val rowKey = new String(putRequest.keyBytes, StandardCharsets.UTF_8)
         val mutation = RowMutation.create(putRequest.dataset, rowKey)
-          .setCell("data", Constants.bigtableValue, new String(putRequest.valueBytes, StandardCharsets.UTF_8))
-          .setCell("data", Constants.bigtableTs, putRequest.tsMillis.getOrElse(0L))
+          .setCell(Constants.bigtableColumnFamily, Constants.bigtableValue, new String(putRequest.valueBytes, StandardCharsets.UTF_8))
+          .setCell(Constants.bigtableColumnFamily, Constants.bigtableTs, putRequest.tsMillis.getOrElse(0L))
 
         dataClient.mutateRow(mutation)
         true

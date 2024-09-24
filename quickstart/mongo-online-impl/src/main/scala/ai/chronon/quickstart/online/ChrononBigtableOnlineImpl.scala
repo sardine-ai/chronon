@@ -11,9 +11,6 @@ import scala.util.{Failure, Success}
 import java.nio.charset.StandardCharsets
 import scala.concurrent.ExecutionContext.Implicits.global
 
-/**
- * An implementation using Google Cloud Bigtable instead of MongoDB.
- */
 class ChrononBigtableOnlineImpl(userConf: Map[String, String]) extends Api(userConf) {
 
   @transient lazy val registry: ExternalSourceRegistry = new ExternalSourceRegistry()
@@ -35,11 +32,10 @@ class ChrononBigtableOnlineImpl(userConf: Map[String, String]) extends Api(userC
 
   // Override the logResponse method to log responses in Bigtable instead of MongoDB
   override def logResponse(resp: LoggableResponse): Unit = {
-    val tableName = userConf("log_table")
-    val mutation = RowMutation.create(tableName, resp.joinName)
-      .setCell("log_data", "keyBytes", new String(resp.keyBytes, StandardCharsets.UTF_8))
+    val mutation = RowMutation.create(Constants.bigtableLogTable, resp.joinName)
+      .setCell("log_data", Constants.bigtableKey, new String(resp.keyBytes, StandardCharsets.UTF_8))
       .setCell("log_data", "schemaHash", Option(resp.schemaHash).getOrElse("SCHEMA_PUBLISHED"))
-      .setCell("log_data", "valueBytes", new String(resp.valueBytes, StandardCharsets.UTF_8))
+      .setCell("log_data", Constants.bigtableValue, new String(resp.valueBytes, StandardCharsets.UTF_8))
       .setCell("log_data", "atMillis", resp.tsMillis)
       .setCell("log_data", "ts", System.currentTimeMillis())
 
