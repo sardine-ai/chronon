@@ -295,9 +295,7 @@ lazy val aggregator = project
     libraryDependencies ++=
       fromMatrix(scalaVersion.value, "spark-sql/provided") ++ Seq(
         "com.yahoo.datasketches" % "sketches-core" % "0.13.4",
-        "com.google.code.gson" % "gson" % "2.8.6",
-        "com.google.cloud" % "google-cloud-bigquery" % "2.42.2",
-        "redis.clients" % "jedis" % "5.1.3"
+        "com.google.code.gson" % "gson" % "2.8.6"
       )
   )
 
@@ -358,8 +356,11 @@ val sparkBaseSettings: Seq[Setting[_]] = Seq(
   mainClass in (Compile, run) := Some("ai.chronon.spark.Driver"),
   cleanFiles ++= Seq(file(tmp_warehouse)),
   Test / testOptions += Tests.Setup(() => cleanSparkMeta()),
-  // compatibility for m1 chip laptop
-  libraryDependencies += "org.xerial.snappy" % "snappy-java" % "1.1.8.4" % Test
+  libraryDependencies ++= Seq(
+    "org.xerial.snappy" % "snappy-java" % "1.1.8.4" % Test, // compatibility for m1 chip laptop
+    "com.google.cloud" % "google-cloud-bigquery" % "2.42.2",
+    "redis.clients" % "jedis" % "5.1.3"
+  )
 ) ++ addArtifact(assembly / artifact, assembly) ++ publishSettings
 
 lazy val spark_uber = (project in file("spark"))
