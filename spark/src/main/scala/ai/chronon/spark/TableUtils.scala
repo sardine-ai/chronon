@@ -41,6 +41,9 @@ import scala.collection.immutable
 import scala.concurrent.{ExecutionContext, ExecutionContextExecutor}
 import scala.util.{Failure, Success, Try}
 import redis.clients.jedis.Jedis
+import com.google.cloud.bigquery.{BigQuery, BigQueryOptions, FieldValueList, JobId, JobInfo, QueryJobConfiguration}
+
+import java.util.UUID
 import scala.jdk.CollectionConverters._
 
 case class TableUtils(sparkSession: SparkSession) {
@@ -395,7 +398,7 @@ case class TableUtils(sparkSession: SparkSession) {
       alterTableProperties(tableName, tableProperties)
     }
 
-    if (autoExpand && sqlFormat != "bigquery") {
+    if (autoExpand) {
       expandTable(tableName, dfRearranged.schema)
     }
 
@@ -445,6 +448,24 @@ case class TableUtils(sparkSession: SparkSession) {
         logger.error("Error running query:", e)
         throw e
     }
+  }
+
+  def rawSql(query: String): Unit = {
+    val bigquery = BigQueryOptions.getDefaultInstance.getService
+
+    val jobConfig = QueryJobConfiguration.newBuilder(query).build()
+    val jobId = JobId.of(UUID.randomUUID.toString)
+    val jobInfo = JobInfo.newBuilder(jobConfig).setJobId(jobId).build()
+    val job = bigquery.create(jobInfo)
+
+    val queryJob = job.waitFor()
+
+    if (queryJob == null) throw new RuntimeException("Job no longer exists")
+    else if (queryJob.getStatus.getError != null) {
+      throw new RuntimeException(queryJob.getStatus.getError.toString)
+    }
+
+    logger.info("Raw SQL query executed successfully")
   }
 
   def insertUnPartitioned(df: DataFrame,
@@ -805,7 +826,7 @@ case class TableUtils(sparkSession: SparkSession) {
   def dropTableIfExists(tableName: String): Unit = {
     val command = s"DROP TABLE IF EXISTS $tableName"
     logger.info(s"Dropping table with command: $command")
-    sql(command)
+    rawSql(command)
   }
 
   def archiveOrDropTableIfExists(tableName: String, timestamp: Option[Instant]): Unit = {
@@ -822,10 +843,12 @@ case class TableUtils(sparkSession: SparkSession) {
   def archiveTableIfExists(tableName: String, timestamp: Option[Instant]): Unit = {
     if (tableExists(tableName)) {
       val humanReadableTimestamp = archiveTimestampFormatter.format(timestamp.getOrElse(Instant.now()))
-      val finalArchiveTableName = s"${tableName}_${humanReadableTimestamp}"
+      val tableNameParts = tableName.split("\\.")
+      val baseTableName = if (tableNameParts.length > 1) tableNameParts(1) else tableNameParts(0)
+      val finalArchiveTableName = s"${baseTableName}_${humanReadableTimestamp}"
       val command = s"ALTER TABLE $tableName RENAME TO $finalArchiveTableName"
       logger.info(s"Archiving table with command: $command")
-      sql(command)
+      rawSql(command)
     }
   }
 
