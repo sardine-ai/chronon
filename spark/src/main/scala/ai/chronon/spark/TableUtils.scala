@@ -649,19 +649,10 @@ case class TableUtils(sparkSession: SparkSession) {
     val partitionFragment = if (partitionColumns != null && partitionColumns.nonEmpty) {
       val partitionDefinitions = schema
         .filter(field => partitionColumns.contains(field.name))
-        .map(field => s"${field.name} ")
-      
-      if(sqlFormat == "bigquery") {
-        s"""PARTITION BY (
-           |    ${partitionDefinitions.mkString(",\n    ")}
-           |)""".stripMargin
-      }
-      else {
-        s"""PARTITIONED BY (
-           |    ${partitionDefinitions.mkString(",\n    ")}
-           |)""".stripMargin
-      }
-      
+        .map(field => s"${field.name} ${field.dataType.catalogString}")
+      s"""PARTITIONED BY (
+         |    ${partitionDefinitions.mkString(",\n    ")}
+         |)""".stripMargin
     } else {
       ""
     }
@@ -672,7 +663,7 @@ case class TableUtils(sparkSession: SparkSession) {
     } else {
       ""
     }
-    val fileFormatString = if (useIceberg || sqlFormat == "bigquery") {
+    val fileFormatString = if (useIceberg) {
       ""
     } else {
       s"STORED AS $fileFormat"

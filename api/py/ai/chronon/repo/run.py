@@ -497,7 +497,7 @@ class Runner:
                             " an existing one running."
                         )
                 command = (
-                    "bash {script} --class ai.chronon.spark.Driver -- {subcommand} {args} {additional_args}"
+                    "bash {script} --class ai.chronon.spark.Driver {jar} {subcommand} {args} {additional_args}"
                 ).format(
                     script=self.spark_submit,
                     jar=self.jar_path,
@@ -510,7 +510,6 @@ class Runner:
                 command_list.append(command)
             else:
                 # offline mode
-                command_template = "bash {script} --class ai.chronon.spark.Driver -- {subcommand} {args} {additional_args}"
                 if self.parallelism > 1:
                     assert self.start_ds is not None and self.ds is not None, (
                         "To use parallelism, please specify --start-ds and --end-ds to "
@@ -520,7 +519,9 @@ class Runner:
                         self.start_ds, self.ds, self.parallelism
                     )
                     for start_ds, end_ds in date_ranges:
-                        command = command_template.format(
+                        command = (
+                            "bash {script} --class ai.chronon.spark.Driver {jar} {subcommand} {args} {additional_args}"
+                        ).format(
                             script=self.spark_submit,
                             jar=self.jar_path,
                             subcommand=ROUTES[self.conf_type][self.mode],
@@ -531,7 +532,9 @@ class Runner:
                         )
                         command_list.append(command)
                 else:
-                    command = command_template.format(
+                    command = (
+                        "bash {script} --class ai.chronon.spark.Driver {jar} {subcommand} {args} {additional_args}"
+                    ).format(
                         script=self.spark_submit,
                         jar=self.jar_path,
                         subcommand=ROUTES[self.conf_type][self.mode],
@@ -541,7 +544,6 @@ class Runner:
                         ),
                     )
                     command_list.append(command)
-        
         if len(command_list) > 1:
             # parallel backfill mode
             with multiprocessing.Pool(processes=int(self.parallelism)) as pool:
@@ -609,7 +611,7 @@ def set_defaults(parser):
         online_class=os.environ.get("CHRONON_ONLINE_CLASS"),
         version=os.environ.get("VERSION"),
         spark_version=os.environ.get("SPARK_VERSION", "2.4.0"),
-        spark_submit_path=os.path.join(chronon_repo_path, "scripts/gcloud_submit.sh"),
+        spark_submit_path=os.path.join(chronon_repo_path, "scripts/spark_submit.sh"),
         spark_streaming_submit_path=os.path.join(
             chronon_repo_path, "scripts/spark_streaming.sh"
         ),
