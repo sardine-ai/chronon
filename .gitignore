@@ -43,3 +43,8 @@ mvn_settings.xml
 # Release folder
 releases
 
+.bloop
+.metals
+metals.sbt
+*.DS_Store
+out
