@@ -363,7 +363,7 @@ case class TableUtils(sparkSession: SparkSession) {
                        tableName: String,
                        tableProperties: Map[String, String] = null,
                        partitionColumns: Seq[String] = Seq(partitionColumn),
-                       saveMode: SaveMode = SaveMode.Overwrite,
+                       saveMode: SaveMode = SaveMode.Append,
                        fileFormat: String = "PARQUET",
                        autoExpand: Boolean = false,
                        stats: Option[DfStats] = None,
@@ -620,15 +620,31 @@ case class TableUtils(sparkSession: SparkSession) {
 
         val bigqueryDf = repartitionedDf.withColumn(partitionColumn, to_date(col(partitionColumn), partitionFormat))
 
-        bigqueryDf
-          .write
-          .format("bigquery")
-//          .option("temporaryGcsBucket","chronon-tmp")
-          .option("writeMethod", "direct")
-//          .option("partitionField", partitionColumn)
-//          .option("partitionType", "DAY")
-          .mode(saveMode)
-          .save(tableName)
+        // TODO: set this as a parameter
+        // as a rule of thumb, small size tables are faster with direct writes
+        // memory-intensive saves are faster with indirect writes because it writes to GCS first and then
+        // triggers a bigquery load job
+        val useDirectWrite = false
+        if (useDirectWrite) {
+          bigqueryDf
+            .write
+            .format("bigquery")
+            .option("writeMethod", "direct")
+            .mode(saveMode)
+            .save(tableName)
+        }
+        else {
+          logger.info(s"indirect write to table $tableName")
+
+          bigqueryDf
+            .write
+            .format("bigquery")
+            .option("temporaryGcsBucket", temporaryGcsBucket)
+//            .option("partitionField", partitionColumn)
+//            .option("partitionType", "DAY")
+            .mode(saveMode)
+            .save(tableName)
+        }
       }
       else {
         repartitionedDf
