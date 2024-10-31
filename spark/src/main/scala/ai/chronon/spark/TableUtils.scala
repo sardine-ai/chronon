@@ -99,6 +99,8 @@ case class TableUtils(sparkSession: SparkSession) {
   if(sqlFormat == "bigquery") {
     sparkSession.conf.set("materializationDataset", sparkSession.conf.get("spark.materializationDataset"))
     sparkSession.conf.set("viewsEnabled", "true")
+    sparkSession.conf.set("bigQueryJobLabel.cost_center", "data-platform")
+    sparkSession.conf.set("bigQueryJobLabel.usage", "chronon")
   }
   // converts String-s like "a=b/c=d" to Map("a" -> "b", "c" -> "d")
   
