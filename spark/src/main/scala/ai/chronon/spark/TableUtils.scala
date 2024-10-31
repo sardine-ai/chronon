@@ -92,6 +92,8 @@ case class TableUtils(sparkSession: SparkSession) {
 
   val redisHost: String = sparkSession.conf.get("spark.chronon.redis.host", "localhost")
 
+  val temporaryGcsBucket: String = sparkSession.conf.get("spark.chronon.temporary_gcs_bucket")
+
   sparkSession.sparkContext.setLogLevel("INFO")
 
   if(sqlFormat == "bigquery") {
@@ -351,7 +353,7 @@ case class TableUtils(sparkSession: SparkSession) {
     df.write
       .format("bigquery")
       .option("table", tableName)
-      .option("temporaryGcsBucket","chronon-tmp")
+      .option("temporaryGcsBucket", temporaryGcsBucket)
       .option("partitionField", partitionColumn)
       .option("partitionType", "DAY")
       .save()
@@ -391,8 +393,6 @@ case class TableUtils(sparkSession: SparkSession) {
         }
       }
     }
-
-    // TODO: implement table properties in BigQuery
 
     if (tableProperties != null && tableProperties.nonEmpty) {
       alterTableProperties(tableName, tableProperties)
@@ -576,6 +576,17 @@ case class TableUtils(sparkSession: SparkSession) {
       val dailyFileCountEstimate = totalFileCountEstimate / nonZeroTablePartitionCount + 1
       val dailyFileCountBounded =
         math.max(math.min(dailyFileCountEstimate, dailyFileCountUpperBound), dailyFileCountLowerBound)
+
+      logger.info(
+        s"""
+           |Calculating partitions.
+           |rowCount: $rowCount
+           |rowCountPerPartition: $rowCountPerPartition
+           |columnSizeEstimate: $columnSizeEstimate
+           |nonZeroTablePartitionCount: $nonZeroTablePartitionCount
+           |dailyFileCountEstimate: $dailyFileCountEstimate
+           |dailyFileCountBounded: $dailyFileCountBounded
+           |""".stripMargin)
 
       val outputParallelism = df.sparkSession.conf
         .getOption(SparkConstants.ChrononOutputParallelismOverride)
