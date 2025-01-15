@@ -94,7 +94,7 @@ struct EntitySource {
     3: optional string mutationTopic
 
     /**
-    If each new hive partition contains not just the current day's events but the entire set of events since the begininng. The key property is that the events are not mutated across partitions.
+    * The logic used to scan both the table and the topic. Contains row level transformations and filtering expressed as Spark SQL statements.
     */
     4: optional Query query
 }
@@ -257,6 +257,8 @@ struct MetaData {
     // Flag to indicate whether join backfill should backfill previous holes.
     // Setting to false will only backfill latest single partition
     14: optional bool historicalBackfill
+    // Optional expected deprecation date
+    15: optional string deprecationDate
 }
 
 // Equivalent to a FeatureSet in chronon terms
@@ -274,7 +276,7 @@ struct GroupBy {
     5: optional Accuracy accuracy
     // Optional start date for a group by backfill, if it's unset then no historical partitions will be generate
     6: optional string backfillStartDate
-    // support for offline only for now
+    // Optional derivation list
     7: optional list<Derivation> derivations
 }
 

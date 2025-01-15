@@ -22,7 +22,9 @@ compile.py --conf=path/to/your/chronon_file.py
 
 The path that you pass should either commence with `group_by/`, `join/`, or `staging_query/`
 
-This will produce one 
+This will produce JSON configs for each config in the given paths under the `production/` folder.
+
+There are also options to display generated features `--feature-display` or the `--table-display` to show related modes and tables that might be generated.
 
 ## Analyze
 
@@ -53,6 +55,8 @@ run.py --mode=analyze --conf=production/joins/<path_to_conf_file> --enable-hitte
 Optional parameters:
 
 `--enable-hitter`: enable skewed data analysis - include the heavy hitter analysis in output, only output schema if not specified
+
+`--skip-timestamp-check`: skip sampling and timestamp checks - setting to true will result in timestamp checks being skipped
 
 `--start-date` : Finds heavy hitters & time-distributions for a specified start date. Default 3 days prior to "today"
 

@@ -81,6 +81,9 @@ object Driver {
                    default = Some(false),
                    descr = "Skip the first unfilled partition range if some future partitions have been populated.")
 
+    val useDeltaCatalog: ScallopOption[Boolean] =
+      opt[Boolean](required = false, default = Some(false), descr = "Enable the use of the delta lake catalog")
+
     val stepDays: ScallopOption[Int] =
       opt[Int](required = false,
                descr = "Runs offline backfill in steps, step-days at a time. Default is 30 days",
@@ -136,8 +139,22 @@ object Driver {
     def isLocal: Boolean = localTableMapping.nonEmpty || localDataPath.isDefined
 
     protected def buildSparkSession(): SparkSession = {
+      // use of the delta lake catalog requires a couple of additional spark config options
+      val extraDeltaConfigs = useDeltaCatalog.toOption match {
+        case Some(true) =>
+          Some(
+            Map(
+              "spark.sql.extensions" -> "io.delta.sql.DeltaSparkSessionExtension",
+              "spark.sql.catalog.spark_catalog" -> "org.apache.spark.sql.delta.catalog.DeltaCatalog"
+            ))
+        case _ => None
+      }
+
       if (localTableMapping.nonEmpty) {
-        val localSession = SparkSessionBuilder.build(subcommandName(), local = true, localWarehouseLocation.toOption)
+        val localSession = SparkSessionBuilder.build(subcommandName(),
+                                                     local = true,
+                                                     localWarehouseLocation.toOption,
+                                                     additionalConfig = extraDeltaConfigs)
         localTableMapping.foreach {
           case (table, filePath) =>
             val file = new File(filePath)
@@ -150,13 +167,16 @@ object Driver {
         val localSession =
           SparkSessionBuilder.build(subcommandName(),
                                     local = true,
-                                    localWarehouseLocation = localWarehouseLocation.toOption)
+                                    localWarehouseLocation = localWarehouseLocation.toOption,
+                                    additionalConfig = extraDeltaConfigs)
         LocalDataLoader.loadDataRecursively(dir, localSession)
         localSession
       } else {
         // We use the KryoSerializer for group bys and joins since we serialize the IRs.
         // But since staging query is fairly freeform, it's better to stick to the java serializer.
-        SparkSessionBuilder.build(subcommandName(), enforceKryoSerializer = !subcommandName().contains("staging_query"))
+        SparkSessionBuilder.build(subcommandName(),
+                                  enforceKryoSerializer = !subcommandName().contains("staging_query"),
+                                  additionalConfig = extraDeltaConfigs)
       }
     }
 
@@ -425,6 +445,12 @@ object Driver {
             "enable skewed data analysis - whether to include the heavy hitter analysis, will only output schema if disabled",
           default = Some(false)
         )
+      val skipTimestampCheck: ScallopOption[Boolean] =
+        opt[Boolean](
+          required = false,
+          descr = "skip sampling and timestamp checks - setting to true will result in timestamp checks being skipped",
+          default = Some(false)
+        )
 
       override def subcommandName() = "analyzer_util"
     }
@@ -437,7 +463,9 @@ object Driver {
                    args.endDate(),
                    args.count(),
                    args.sample(),
-                   args.enableHitter()).run
+                   args.enableHitter(),
+                   silenceMode = false,
+                   skipTimestampCheck = args.skipTimestampCheck()).run
     }
   }
 
@@ -744,15 +772,32 @@ object Driver {
     class Args extends Subcommand("metadata-upload") with OnlineSubcommand {
       val confPath: ScallopOption[String] =
         opt[String](required = true, descr = "Path to the Chronon config file or directory")
+      val endPointName: ScallopOption[String] =
+        opt[String](required = false, descr = "Name of the endpoint to upload the metadata to")
+      val batchSize: ScallopOption[Int] =
+        opt[Int](required = false, descr = "Batch size for uploading metadata", default = Some(50))
     }
 
     def run(args: Args): Unit = {
-      val acceptedEndPoints = List(MetadataEndPoint.ConfByKeyEndPointName, MetadataEndPoint.NameByTeamEndPointName)
+      val acceptedEndPoints = if (args.endPointName.isDefined) {
+        List(args.endPointName())
+      } else {
+        List(MetadataEndPoint.ConfByKeyEndPointName, MetadataEndPoint.NameByTeamEndPointName)
+      }
       val dirWalker = new MetadataDirWalker(args.confPath(), acceptedEndPoints)
       val kvMap: Map[String, Map[String, List[String]]] = dirWalker.run
       implicit val ec: ExecutionContext = ExecutionContext.global
       val putRequestsSeq: Seq[Future[scala.collection.Seq[Boolean]]] = kvMap.toSeq.map {
-        case (endPoint, kvMap) => args.metaDataStore.put(kvMap, endPoint)
+        case (endPoint, kvMap) =>
+          if (args.batchSize.isDefined) {
+            args.metaDataStore.put(
+              kVPairs = kvMap,
+              datasetName = endPoint,
+              batchSize = args.batchSize()
+            )
+          } else {
+            args.metaDataStore.put(kVPairs = kvMap, datasetName = endPoint)
+          }
       }
       val res = putRequestsSeq.flatMap(putRequests => Await.result(putRequests, 1.hour))
       logger.info(

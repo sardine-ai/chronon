@@ -25,14 +25,14 @@ import ai.chronon.spark.Driver.parseConf
 import com.yahoo.memory.Memory
 import com.yahoo.sketches.ArrayOfStringsSerDe
 import com.yahoo.sketches.frequencies.{ErrorType, ItemsSketch}
-import org.apache.spark.sql.{DataFrame, Row, types}
+import org.apache.spark.sql.{Column, DataFrame, Row, types}
 import org.apache.spark.sql.functions.{col, from_unixtime, lit, sum, when}
 import org.apache.spark.sql.types.{StringType, StructType}
 import ai.chronon.api.DataModel.{DataModel, Entities, Events}
 
 import scala.collection.{Seq, immutable, mutable}
 import scala.collection.mutable.ListBuffer
-import scala.util.ScalaJavaConversions.ListOps
+import scala.util.ScalaJavaConversions.{ListOps, MapOps}
 
 //@SerialVersionUID(3457890987L)
 //class ItemSketchSerializable(var mapSize: Int) extends ItemsSketch[String](mapSize) with Serializable {}
@@ -68,7 +68,8 @@ class Analyzer(tableUtils: TableUtils,
                count: Int = 64,
                sample: Double = 0.1,
                enableHitter: Boolean = false,
-               silenceMode: Boolean = false) {
+               silenceMode: Boolean = false,
+               skipTimestampCheck: Boolean = false) {
   @transient lazy val logger = LoggerFactory.getLogger(getClass)
   // include ts into heavy hitter analysis - useful to surface timestamps that have wrong units
   // include total approx row count - so it is easy to understand the percentage of skewed data
@@ -171,7 +172,7 @@ class Analyzer(tableUtils: TableUtils,
 
   }
 
-  def toAggregationMetadata(aggPart: AggregationPart, columnType: DataType): AggregationMetadata = {
+  private def toAggregationMetadata(aggPart: AggregationPart, columnType: DataType): AggregationMetadata = {
     AggregationMetadata(aggPart.outputColumnName,
                         columnType,
                         aggPart.operation.toString.toLowerCase,
@@ -179,21 +180,28 @@ class Analyzer(tableUtils: TableUtils,
                         aggPart.inputColumn.toLowerCase)
   }
 
-  def toAggregationMetadata(columnName: String, columnType: DataType): AggregationMetadata = {
-    AggregationMetadata(columnName, columnType, "No operation", "Unbounded", columnName)
+  private def toAggregationMetadata(columnName: String,
+                                    columnType: DataType,
+                                    hasDerivation: Boolean = false): AggregationMetadata = {
+    val operation = if (hasDerivation) "Derivation" else "No Operation"
+    AggregationMetadata(columnName, columnType, operation, "Unbounded", columnName)
   }
 
-  def analyzeGroupBy(groupByConf: api.GroupBy,
-                     prefix: String = "",
-                     includeOutputTableName: Boolean = false,
-                     enableHitter: Boolean = false): (Array[AggregationMetadata], Map[String, DataType]) = {
+  def analyzeGroupBy(
+      groupByConf: api.GroupBy,
+      prefix: String = "",
+      includeOutputTableName: Boolean = false,
+      enableHitter: Boolean = false,
+      skipTimestampCheck: Boolean = skipTimestampCheck): (Array[AggregationMetadata], Map[String, DataType]) = {
     groupByConf.setups.foreach(tableUtils.sql)
     val groupBy = GroupBy.from(groupByConf, range, tableUtils, computeDependency = enableHitter, finalize = true)
     val name = "group_by/" + prefix + groupByConf.metaData.name
     logger.info(s"""|Running GroupBy analysis for $name ...""".stripMargin)
 
-    val timestampChecks = runTimestampChecks(groupBy.inputDf)
-    validateTimestampChecks(timestampChecks, "GroupBy", name)
+    if (!skipTimestampCheck) {
+      val timestampChecks = runTimestampChecks(groupBy.inputDf)
+      validateTimestampChecks(timestampChecks, "GroupBy", name)
+    }
 
     val analysis =
       if (enableHitter)
@@ -242,11 +250,12 @@ class Analyzer(tableUtils: TableUtils,
            |""".stripMargin)
     }
 
-    val aggMetadata = if (groupByConf.aggregations != null) {
-      groupBy.aggPartWithSchema.map { entry => toAggregationMetadata(entry._1, entry._2) }.toArray
+    val aggMetadata = if (groupByConf.hasDerivations || groupByConf.aggregations == null) {
+      schema.map { tup => toAggregationMetadata(tup.name, tup.fieldType, groupByConf.hasDerivations) }.toArray
     } else {
-      schema.map { tup => toAggregationMetadata(tup.name, tup.fieldType) }.toArray
+      groupBy.aggPartWithSchema.map { entry => toAggregationMetadata(entry._1, entry._2) }.toArray
     }
+
     val keySchemaMap = groupBy.keySchema.map { field =>
       field.name -> SparkConversions.toChrononType(field.name, field.dataType)
     }.toMap
@@ -254,10 +263,12 @@ class Analyzer(tableUtils: TableUtils,
 
   }
 
-  def analyzeJoin(joinConf: api.Join,
-                  enableHitter: Boolean = false,
-                  validateTablePermission: Boolean = true,
-                  validationAssert: Boolean = false): (Map[String, DataType], ListBuffer[AggregationMetadata]) = {
+  def analyzeJoin(
+      joinConf: api.Join,
+      enableHitter: Boolean = false,
+      validateTablePermission: Boolean = true,
+      validationAssert: Boolean = false,
+      skipTimestampCheck: Boolean = skipTimestampCheck): (Map[String, DataType], ListBuffer[AggregationMetadata]) = {
     val name = "joins/" + joinConf.metaData.name
     logger.info(s"""|Running join analysis for $name ...""".stripMargin)
     // run SQL environment setups such as UDFs and JARs
@@ -276,13 +287,15 @@ class Analyzer(tableUtils: TableUtils,
       (analysis, leftDf)
     }
 
-    val timestampChecks = runTimestampChecks(leftDf)
-    validateTimestampChecks(timestampChecks, "Join", name)
+    if (!skipTimestampCheck) {
+      val timestampChecks = runTimestampChecks(leftDf)
+      validateTimestampChecks(timestampChecks, "Join", name)
+    }
 
     val leftSchema = leftDf.schema.fields
       .map(field => (field.name, SparkConversions.toChrononType(field.name, field.dataType)))
       .toMap
-    val aggregationsMetadata = ListBuffer[AggregationMetadata]()
+    val joinIntermediateValuesMetadata = ListBuffer[AggregationMetadata]()
     val keysWithError: ListBuffer[(String, String)] = ListBuffer.empty[(String, String)]
     val gbTables = ListBuffer[String]()
     val gbStartPartitions = mutable.Map[String, List[String]]()
@@ -298,8 +311,12 @@ class Analyzer(tableUtils: TableUtils,
 
     joinConf.joinParts.toScala.foreach { part =>
       val (aggMetadata, gbKeySchema) =
-        analyzeGroupBy(part.groupBy, part.fullPrefix, includeOutputTableName = true, enableHitter = enableHitter)
-      aggregationsMetadata ++= aggMetadata.map { aggMeta =>
+        analyzeGroupBy(part.groupBy,
+                       part.fullPrefix,
+                       includeOutputTableName = true,
+                       enableHitter = enableHitter,
+                       skipTimestampCheck = skipTimestampCheck)
+      joinIntermediateValuesMetadata ++= aggMetadata.map { aggMeta =>
         AggregationMetadata(part.fullPrefix + "_" + aggMeta.name,
                             aggMeta.columnType,
                             aggMeta.operation,
@@ -320,7 +337,7 @@ class Analyzer(tableUtils: TableUtils,
     }
     if (joinConf.onlineExternalParts != null) {
       joinConf.onlineExternalParts.toScala.foreach { part =>
-        aggregationsMetadata ++= part.source.valueFields.map { field =>
+        joinIntermediateValuesMetadata ++= part.source.valueFields.map { field =>
           AggregationMetadata(part.fullName + "_" + field.name,
                               field.fieldType,
                               null,
@@ -335,7 +352,7 @@ class Analyzer(tableUtils: TableUtils,
     } else Set()
 
     val rightSchema: Map[String, DataType] =
-      aggregationsMetadata.map(aggregation => (aggregation.name, aggregation.columnType)).toMap
+      joinIntermediateValuesMetadata.map(aggregation => (aggregation.name, aggregation.columnType)).toMap
     if (silenceMode) {
       logger.info(s"""ANALYSIS completed for join/${joinConf.metaData.cleanName}.""".stripMargin)
     } else {
@@ -390,8 +407,41 @@ class Analyzer(tableUtils: TableUtils,
         )
       }
     }
+    // Derive the join online fetching output schema with metadata
+    val joinOutputValuesMetadata: ListBuffer[AggregationMetadata] = if (joinConf.hasDerivations) {
+      val keyColumns: List[String] = joinConf.joinParts.toScala
+        .flatMap(joinPart => {
+          val keyCols: Seq[String] = joinPart.groupBy.keyColumns.toScala
+          if (joinPart.keyMapping == null) keyCols
+          else {
+            keyCols.map(key => {
+              if (joinPart.rightToLeft.contains(key)) joinPart.rightToLeft(key)
+              else key
+            })
+          }
+        })
+        .distinct
+      val tsDsSchema: Map[String, DataType] = {
+        Map("ts" -> api.StringType, "ds" -> api.StringType)
+      }
+      val sparkSchema = {
+        val keySchema = leftSchema.filter(tup => keyColumns.contains(tup._1))
+        val schema: Seq[(String, DataType)] = keySchema.toSeq ++ rightSchema.toSeq ++ tsDsSchema
+        StructType(SparkConversions.fromChrononSchema(schema))
+      }
+      val dummyOutputDf = tableUtils.sparkSession
+        .createDataFrame(tableUtils.sparkSession.sparkContext.parallelize(immutable.Seq[Row]()), sparkSchema)
+      val finalOutputColumns: Array[Column] =
+        joinConf.derivationsScala.finalOutputColumn(rightSchema.toArray.map(_._1)).toArray
+      val derivedDummyOutputDf = dummyOutputDf.select(finalOutputColumns: _*)
+      val columns = SparkConversions.toChrononSchema(
+        StructType(derivedDummyOutputDf.schema.filterNot(tup => tsDsSchema.contains(tup.name))))
+      ListBuffer(columns.map { tup => toAggregationMetadata(tup._1, tup._2, joinConf.hasDerivations) }: _*)
+    } else {
+      joinIntermediateValuesMetadata
+    }
     // (schema map showing the names and datatypes, right side feature aggregations metadata for metadata upload)
-    (leftSchema ++ rightSchema, aggregationsMetadata)
+    (leftSchema ++ rightSchema, joinOutputValuesMetadata)
   }
 
   // validate the schema of the left and right side of the join and make sure the types match
@@ -499,12 +549,12 @@ class Analyzer(tableUtils: TableUtils,
 
   // For groupBys validate if the timestamp provided produces some values
   // if all values are null this should be flagged as an error
-  def runTimestampChecks(df: DataFrame, sampleNumber: Int = 1000): Map[String, String] = {
+  def runTimestampChecks(df: DataFrame, sampleNumber: Int = 100): Map[String, String] = {
 
     val hasTimestamp = df.schema.fieldNames.contains(Constants.TimeColumn)
     val mapTimestampChecks = if (hasTimestamp) {
-      // set max sample to 1000 rows if larger input is provided
-      val sampleN = if (sampleNumber > 1000) { 1000 }
+      // set max sample to 100 rows if larger input is provided
+      val sampleN = if (sampleNumber > 100) { 100 }
       else { sampleNumber }
       dataFrameToMap(
         df.limit(sampleN)
@@ -588,12 +638,14 @@ class Analyzer(tableUtils: TableUtils,
       case confPath: String =>
         if (confPath.contains("/joins/")) {
           val joinConf = parseConf[api.Join](confPath)
-          analyzeJoin(joinConf, enableHitter = enableHitter)
+          analyzeJoin(joinConf, enableHitter = enableHitter, skipTimestampCheck = skipTimestampCheck)
         } else if (confPath.contains("/group_bys/")) {
           val groupByConf = parseConf[api.GroupBy](confPath)
-          analyzeGroupBy(groupByConf, enableHitter = enableHitter)
+          analyzeGroupBy(groupByConf, enableHitter = enableHitter, skipTimestampCheck = skipTimestampCheck)
         }
-      case groupByConf: api.GroupBy => analyzeGroupBy(groupByConf, enableHitter = enableHitter)
-      case joinConf: api.Join       => analyzeJoin(joinConf, enableHitter = enableHitter)
+      case groupByConf: api.GroupBy =>
+        analyzeGroupBy(groupByConf, enableHitter = enableHitter, skipTimestampCheck = skipTimestampCheck)
+      case joinConf: api.Join =>
+        analyzeJoin(joinConf, enableHitter = enableHitter, skipTimestampCheck = skipTimestampCheck)
     }
 }

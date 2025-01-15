@@ -18,9 +18,9 @@ package ai.chronon.spark.test
 
 import ai.chronon.aggregator.test.Column
 import ai.chronon.api
-import ai.chronon.api.{Builders, Constants, TimeUnit, Window}
+import ai.chronon.api.{Builders, Constants}
 import ai.chronon.spark.JoinUtils.{contains_any, set_add}
-import ai.chronon.spark.{JoinUtils, PartitionRange, SparkSessionBuilder, TableUtils}
+import ai.chronon.spark.{GroupBy, JoinUtils, PartitionRange, SparkSessionBuilder, TableUtils}
 import ai.chronon.spark.Extensions._
 import org.apache.spark.rdd.RDD
 import org.apache.spark.sql.functions._
@@ -33,13 +33,10 @@ import scala.collection.mutable
 import scala.util.{Random, Try}
 
 class JoinUtilsTest {
-
-  lazy val spark: SparkSession = SparkSessionBuilder.build("JoinUtilsTest", local = true)
-  private val tableUtils = TableUtils(spark)
-  private val namespace = "joinUtil" + "_" + Random.alphanumeric.take(6).mkString
-  tableUtils.createDatabase(namespace)
   @Test
   def testUDFSetAdd(): Unit = {
+    val spark: SparkSession =
+      SparkSessionBuilder.build("JoinUtilsTest" + "_" + Random.alphanumeric.take(6).mkString, local = true)
     val data = Seq(
       Row(Seq("a", "b", "c"), "a"),
       Row(Seq("a", "b", "c"), "d"),
@@ -74,6 +71,8 @@ class JoinUtilsTest {
 
   @Test
   def testUDFContainsAny(): Unit = {
+    val spark: SparkSession =
+      SparkSessionBuilder.build("JoinUtilsTest" + "_" + Random.alphanumeric.take(6).mkString, local = true)
     val data = Seq(
       Row(Seq("a", "b", "c"), Seq("a")),
       Row(Seq("a", "b", "c"), Seq("a", "b")),
@@ -107,6 +106,8 @@ class JoinUtilsTest {
                                rightSchema: StructType,
                                keys: Seq[String],
                                isFailure: Boolean): Try[DataFrame] = {
+    val spark: SparkSession =
+      SparkSessionBuilder.build("JoinUtilsTest" + "_" + Random.alphanumeric.take(6).mkString, local = true)
     val df = Try(
       JoinUtils.coalescedJoin(
         // using empty dataframe is sufficient to test spark query planning
@@ -236,7 +237,12 @@ class JoinUtilsTest {
 
   @Test
   def testCreateJoinView(): Unit = {
-    val finalViewName = "testCreateView"
+    val spark: SparkSession =
+      SparkSessionBuilder.build("JoinUtilsTest" + "_" + Random.alphanumeric.take(6).mkString, local = true)
+    val tableUtils = TableUtils(spark)
+    val namespace = "joinUtil" + "_" + Random.alphanumeric.take(6).mkString
+    tableUtils.createDatabase(namespace)
+    val finalViewName = s"${namespace}.testCreateView"
     val leftTableName = s"${namespace}.testFeatureTable"
     val rightTableName = s"${namespace}.testLabelTable"
     TestUtils.createSampleFeatureTableDf(spark).write.saveAsTable(leftTableName)
@@ -274,6 +280,11 @@ class JoinUtilsTest {
 
   @Test
   def testCreateLatestLabelView(): Unit = {
+    val spark: SparkSession =
+      SparkSessionBuilder.build("JoinUtilsTest" + "_" + Random.alphanumeric.take(6).mkString, local = true)
+    val tableUtils = TableUtils(spark)
+    val namespace = "joinUtil" + "_" + Random.alphanumeric.take(6).mkString
+    tableUtils.createDatabase(namespace)
     val finalViewName = s"${namespace}.testFinalView"
     val leftTableName = s"${namespace}.testFeatureTable2"
     val rightTableName = s"${namespace}.testLabelTable2"
@@ -297,7 +308,7 @@ class JoinUtilsTest {
     assertEquals(6, view.count())
 
     //verity latest label view
-    val latestLabelView = "testLatestLabel"
+    val latestLabelView = s"${namespace}.testLatestLabel"
     JoinUtils.createLatestLabelView(latestLabelView,
                                     finalViewName,
                                     tableUtils,
@@ -319,7 +330,10 @@ class JoinUtilsTest {
 
   @Test
   def testFilterColumns(): Unit = {
-    val testDf = createSampleTable()
+    val spark: SparkSession =
+      SparkSessionBuilder.build("JoinUtilsTest" + "_" + Random.alphanumeric.take(6).mkString, local = true)
+    val tableUtils = TableUtils(spark)
+    val testDf = createSampleTable(spark = spark, tableUtils = tableUtils)
     val filter = Array("listing", "ds", "feature_review")
     val filteredDf = JoinUtils.filterColumns(testDf, filter)
     assertTrue(filteredDf.schema.fieldNames.sorted sameElements filter.sorted)
@@ -327,6 +341,11 @@ class JoinUtilsTest {
 
   @Test
   def testGetRangesToFill(): Unit = {
+    val spark: SparkSession =
+      SparkSessionBuilder.build("JoinUtilsTest" + "_" + Random.alphanumeric.take(6).mkString, local = true)
+    val tableUtils = TableUtils(spark)
+    val namespace = "joinUtil" + "_" + Random.alphanumeric.take(6).mkString
+    tableUtils.createDatabase(namespace)
     // left table
     val itemQueries = List(Column("item", api.StringType, 100))
     val itemQueriesTable = s"${namespace}.item_queries_table"
@@ -343,7 +362,11 @@ class JoinUtilsTest {
 
   @Test
   def testGetRangesToFillWithOverride(): Unit = {
-
+    val spark: SparkSession =
+      SparkSessionBuilder.build("JoinUtilsTest" + "_" + Random.alphanumeric.take(6).mkString, local = true)
+    val tableUtils = TableUtils(spark)
+    val namespace = "joinUtil" + "_" + Random.alphanumeric.take(6).mkString
+    tableUtils.createDatabase(namespace)
     // left table
     val itemQueries = List(Column("item", api.StringType, 100))
     val itemQueriesTable = s"${namespace}.queries_table"
@@ -359,9 +382,35 @@ class JoinUtilsTest {
     assertEquals(range, PartitionRange(startPartitionOverride, endPartition)(tableUtils))
   }
 
+  @Test
+  def testGetRangesToFillWithEndPartition(): Unit = {
+    val spark: SparkSession =
+      SparkSessionBuilder.build("JoinUtilsTest" + "_" + Random.alphanumeric.take(6).mkString, local = true)
+    val tableUtils = TableUtils(spark)
+    val namespace = "joinUtil" + "_" + Random.alphanumeric.take(6).mkString
+    tableUtils.createDatabase(namespace)
+    // left table
+    val itemQueries = List(Column("item", api.StringType, 100))
+    val itemQueriesTable = s"${namespace}.queries_table"
+    DataFrameGen
+      .events(spark, itemQueries, 1000, partitions = 50)
+      .save(itemQueriesTable)
+
+    val startQueryDs = "2023-04-15"
+    val startBackfillDs = "2023-08-01"
+    val endBackfillDs = "2023-08-08"
+    val endQueryDs = "2023-08-15"
+    val leftSource = Builders.Source
+      .events(Builders.Query(startPartition = startQueryDs, endPartition = endQueryDs), table = itemQueriesTable)
+    val range = JoinUtils.getRangesToFill(leftSource, tableUtils, endBackfillDs, Some(startBackfillDs))
+    assertEquals(range, PartitionRange(startBackfillDs, endBackfillDs)(tableUtils))
+  }
+
   import ai.chronon.api.{LongType, StringType, StructField, StructType}
 
-  def createSampleTable(tableName: String = "testSampleTable"): DataFrame = {
+  def createSampleTable(tableName: String = "testSampleTable",
+                        spark: SparkSession,
+                        tableUtils: TableUtils): DataFrame = {
     val schema = StructType(
       tableName,
       Array(
@@ -378,5 +427,40 @@ class JoinUtilsTest {
       Row(3L, 19L, "CA", "2022-10-01", "2022-10-01 08:00:00")
     )
     TestUtils.makeDf(spark, schema, rows)
+  }
+
+  @Test
+  def testInjectKeyFiter(): Unit = {
+    val spark: SparkSession =
+      SparkSessionBuilder.build("JoinUtilsTest" + "_" + Random.alphanumeric.take(6).mkString, local = true)
+    // Create spark sample dataframe
+    val seq = Seq(
+      ("A", 1, "2024-01-01"),
+      ("B's C", 2, "2024-01-01") // edge case with ' in the string
+    )
+    val df = spark.createDataFrame(seq).toDF("k", "v", "ds")
+    val namespace = "join_util_test" + "_" + Random.alphanumeric.take(6).mkString
+    val table = namespace + ".sample_table"
+    val tableUtils = TableUtils(spark)
+    tableUtils.createDatabase(namespace)
+    df.save(table, partitionColumns = Seq("ds"))
+    val joinPart = Builders.JoinPart(
+      Builders.GroupBy(
+        sources = List(
+          Builders.Source.events(table = table, query = Builders.Query(selects = Map("k" -> "k", "v" -> "v")))
+        ),
+        keyColumns = List("k"),
+        metaData = Builders.MetaData(name = "join_util_test.test_inject_key_filter")
+      )
+    )
+
+    val leftSeq = Seq(("B's C", "2024-01-02"))
+    val leftDf = spark.createDataFrame(leftSeq).toDF("k", "ds")
+    val newJoinPart = JoinUtils.injectKeyFilter(leftDf, joinPart)
+    val gb = GroupBy.from(newJoinPart.groupBy,
+                          PartitionRange("2024-01-01", "2024-01-01")(tableUtils),
+                          tableUtils,
+                          computeDependency = false)
+    assertEquals(1, gb.inputDf.count())
   }
 }

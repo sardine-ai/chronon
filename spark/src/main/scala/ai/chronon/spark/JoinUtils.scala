@@ -24,7 +24,6 @@ import ai.chronon.spark.Extensions._
 import org.apache.spark.sql.DataFrame
 import org.apache.spark.sql.expressions.UserDefinedFunction
 import org.apache.spark.sql.functions.{coalesce, col, udf}
-import org.apache.spark.util.sketch.BloomFilter
 import org.slf4j.LoggerFactory
 
 import java.util
@@ -112,7 +111,7 @@ object JoinUtils {
     lazy val defaultLeftStart = Option(leftSource.query.startPartition)
       .getOrElse(tableUtils.firstAvailablePartition(leftSource.table, leftSource.subPartitionFilters).get)
     val leftStart = overrideStart.getOrElse(defaultLeftStart)
-    val leftEnd = Option(leftSource.query.endPartition).getOrElse(endPartition)
+    val leftEnd = Seq(Option(leftSource.query.endPartition), Some(endPartition)).flatten.min
     PartitionRange(leftStart, leftEnd)(tableUtils)
   }
 
@@ -283,52 +282,9 @@ object JoinUtils {
     labelMap.groupBy(_._2).map { case (v, kvs) => (v, tableUtils.chunk(kvs.keySet.toSet)) }
   }
 
-  /**
-    * Generate a Bloom filter for 'joinPart' when the row count to be backfilled falls below a specified threshold.
-    * This method anticipates that there will likely be a substantial number of rows on the right side that need to be filtered out.
-    *
-    * @return bloomfilter map option for right part
-    */
-
-  def genBloomFilterIfNeeded(
-      joinPart: ai.chronon.api.JoinPart,
-      joinConf: ai.chronon.api.Join,
-      leftRowCount: Long,
-      unfilledRange: PartitionRange,
-      joinLevelBloomMapOpt: Option[util.Map[String, BloomFilter]]): Option[util.Map[String, BloomFilter]] = {
-
-    val rightBlooms = joinLevelBloomMapOpt.map { joinBlooms =>
-      joinPart.rightToLeft.iterator.map {
-        case (rightCol, leftCol) =>
-          rightCol -> joinBlooms.get(leftCol)
-      }.toJMap
-    }
-
-    // print bloom sizes
-    val bloomSizes = rightBlooms.map { blooms =>
-      val sizes = blooms.asScala
-        .map {
-          case (rightCol, bloom) =>
-            s"$rightCol -> ${bloom.bitSize()}"
-        }
-      logger.info(s"Bloom sizes: ${sizes.mkString(", ")}")
-    }
-
-    logger.info(s"""
-           Generating bloom filter for joinPart:
-         |  part name : ${joinPart.groupBy.metaData.name},
-         |  left type : ${joinConf.left.dataModel},
-         |  right type: ${joinPart.groupBy.dataModel},
-         |  accuracy  : ${joinPart.groupBy.inferredAccuracy},
-         |  part unfilled range: $unfilledRange,
-         |  left row count: $leftRowCount
-         |  bloom sizes: $bloomSizes
-         |  groupBy: ${joinPart.groupBy.toString}
-         |""".stripMargin)
-    rightBlooms
-  }
-
-  def injectKeyFilter(leftDf: DataFrame, joinPart: api.JoinPart): Unit = {
+  def injectKeyFilter(leftDf: DataFrame, originalJoinPart: api.JoinPart): api.JoinPart = {
+    // make a copy of the original joinPart to avoid accumulating the key filters into the same object
+    val joinPart = originalJoinPart.deepCopy()
     // Modifies the joinPart to inject the key filter into the where Clause of GroupBys by hardcoding the keyset
     val groupByKeyNames = joinPart.groupBy.getKeyColumns.asScala
 
@@ -348,23 +304,28 @@ object JoinUtils {
               s"KeyName: $keyName, leftSide KeyName: $leftSideKeyName , Join right to left: ${joinPart.rightToLeft
                 .mkString(", ")}")
             val values = collectedLeft.map(row => row.getAs[Any](leftSideKeyName))
-            // Check for null keys, warn if found, err if all null
+            // Check for null keys, warn if found
             val (notNullValues, nullValues) = values.partition(_ != null)
             if (notNullValues.isEmpty) {
-              throw new RuntimeException(
-                s"No not-null keys found for key: $keyName. Check source table or where clauses.")
+              logger.warn(s"No not-null keys found for key: $keyName.")
             } else if (!nullValues.isEmpty) {
               logger.warn(s"Found ${nullValues.length} null keys for key: $keyName.")
             }
 
+            // Escape single quotes in string values for spark sql
+            def escapeSingleQuotes(s: String): String = s.replace("'", "\\'")
+
             // String manipulate to form valid SQL
             val valueSet = notNullValues.map {
-              case s: String => s"'$s'" // Add single quotes for string values
+              case s: String => s"'${escapeSingleQuotes(s)}'" // Add single quotes for string values
               case other     => other.toString // Keep other types (like Int) as they are
             }.toSet
 
-            // Form the final WHERE clause for injection
-            s"$groupByKeyExpression in (${valueSet.mkString(sep = ",")})"
+            if (valueSet.isEmpty) {
+              "false"
+            } else {
+              s"$groupByKeyExpression in (${valueSet.mkString(sep = ",")})"
+            }
         }
         .foreach { whereClause =>
           // Skip adding the filter if it is a join source
@@ -375,6 +336,7 @@ object JoinUtils {
           }
         }
     }
+    joinPart
   }
 
   def filterColumns(df: DataFrame, filter: Seq[String]): DataFrame = {
