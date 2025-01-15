@@ -365,7 +365,7 @@ case class TableUtils(sparkSession: SparkSession) {
                        tableName: String,
                        tableProperties: Map[String, String] = null,
                        partitionColumns: Seq[String] = Seq(partitionColumn),
-                       saveMode: SaveMode = SaveMode.Append,
+                       saveMode: SaveMode = SaveMode.Overwrite,
                        fileFormat: String = "PARQUET",
                        autoExpand: Boolean = false,
                        stats: Option[DfStats] = None,
