@@ -38,8 +38,7 @@ import org.apache.spark.storage.StorageLevel
 import java.time.format.DateTimeFormatter
 import java.time.{Instant, ZoneId}
 import java.util.concurrent.{ExecutorService, Executors}
-import scala.collection.{Seq, mutable}
-import scala.collection.immutable
+import scala.collection.{Seq, immutable, mutable}
 import scala.concurrent.{ExecutionContext, ExecutionContextExecutor}
 import scala.util.{Failure, Success, Try}
 import redis.clients.jedis.Jedis
@@ -872,7 +871,7 @@ case class TableUtils(sparkSession: SparkSession) {
   }
 
 
-  def alterTablePropertiesRedis(tableName: String, properties: Map[String, String]): Unit = {
+  def alterTablePropertiesRedis(tableName: String, properties: Map[String, String], unsetProperties: Seq[String] = Seq()): Unit = {
     logger.info(s"Altering table properties with Redis, host: $redisHost")
 
     val redisPort = 6379
@@ -882,7 +881,13 @@ case class TableUtils(sparkSession: SparkSession) {
       properties.foreach { case (key, value) =>
         jedis.hset(tableName, key, value)
       }
+
+      unsetProperties.foreach { key =>
+          jedis.hdel(tableName, key)
+      }
+
       println(s"Properties for table $tableName have been saved to Redis.")
+
     } catch {
       case e: Exception => println(s"An error occurred while saving to Redis: ${e.getMessage}")
     } finally {
@@ -893,23 +898,25 @@ case class TableUtils(sparkSession: SparkSession) {
   def alterTableProperties(tableName: String,
                            properties: Map[String, String],
                            unsetProperties: Seq[String] = Seq()): Unit = {
-    // Only SQL api exists for setting TBLPROPERTIES
-    val propertiesString = properties
-      .map {
-        case (key, value) =>
-          s"'$key' = '$value'"
+    if (sqlFormat == "bigquery") alterTablePropertiesRedis(tableName, properties, unsetProperties)
+    else {
+      // Only SQL api exists for setting TBLPROPERTIES
+      val propertiesString = properties
+        .map {
+          case (key, value) =>
+            s"'$key' = '$value'"
+        }
+        .mkString(", ")
+      val query = s"ALTER TABLE $tableName SET TBLPROPERTIES ($propertiesString)"
+      sql(query)
+
+      // remove any properties that were set previously during archiving
+      if (unsetProperties.nonEmpty) {
+        val unsetPropertiesString = unsetProperties.map(s => s"'$s'").mkString(", ")
+        val unsetQuery = s"ALTER TABLE $tableName UNSET TBLPROPERTIES IF EXISTS ($unsetPropertiesString)"
+        sql(unsetQuery)
       }
-      .mkString(", ")
-    val query = s"ALTER TABLE $tableName SET TBLPROPERTIES ($propertiesString)"
-    sql(query)
-
-    // remove any properties that were set previously during archiving
-    if (unsetProperties.nonEmpty) {
-      val unsetPropertiesString = unsetProperties.map(s => s"'$s'").mkString(", ")
-      val unsetQuery = s"ALTER TABLE $tableName UNSET TBLPROPERTIES IF EXISTS ($unsetPropertiesString)"
-      sql(unsetQuery)
     }
-
   }
 
   def chunk(partitions: Set[String]): Seq[PartitionRange] = {
