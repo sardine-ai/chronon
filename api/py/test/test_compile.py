@@ -21,7 +21,9 @@ import os
 import re
 
 import pytest
+from ai.chronon.api.ttypes import GroupBy, Join
 from ai.chronon.repo.compile import extract_and_convert
+from ai.chronon.repo.serializer import json2thrift
 from ai.chronon.utils import FeatureDisplayKeys
 from click.testing import CliRunner
 
@@ -37,7 +39,7 @@ def _get_full_file_path(relative_path):
 def _invoke_cli_with_params(runner, input_path, flags=None):
     """Invoke the CLI command with consistent options and specified input_path."""
     command = [
-        "--chronon_root=test/sample",
+        "--chronon_root=api/py/test/sample",
         f"--input_path={input_path}",
         "--debug",
     ]
@@ -75,9 +77,11 @@ def specific_setup():
     files_to_clean = [
         "sample/production/group_bys/unit_test/event_sample_group_by.v1",
         "sample/production/group_bys/unit_test/entity_sample_group_by.require_backfill",
+        "sample/production/group_bys/unit_test/user_inline_group_by",
         "sample/production/joins/unit_test/sample_online_join.v1",
         "sample/production/joins/unit_test/sample_join.v1",
         "sample/production/joins/unit_test/sample_online_join_with_gb_not_online.v1",
+        "sample/production/joins/unit_test/user.sample_join_inline_group_by.v1",
     ]
 
     for relative_path in files_to_clean:
@@ -88,12 +92,14 @@ def specific_setup():
 
 def test_basic_compile():
     runner = CliRunner()
-    result = runner.invoke(extract_and_convert, ["--chronon_root=test/sample", "--input_path=joins/sample_team/"])
+    result = runner.invoke(
+        extract_and_convert, ["--chronon_root=api/py/test/sample", "--input_path=joins/sample_team/"]
+    )
     assert result.exit_code == 0
-    result = runner.invoke(extract_and_convert, ["--chronon_root=test/sample", "--input_path=joins/sample_team"])
+    result = runner.invoke(extract_and_convert, ["--chronon_root=api/py/test/sample", "--input_path=joins/sample_team"])
     assert result.exit_code == 0
     result = runner.invoke(
-        extract_and_convert, ["--chronon_root=test/sample", "--input_path=joins/sample_team/sample_join.py"]
+        extract_and_convert, ["--chronon_root=api/py/test/sample", "--input_path=joins/sample_team/sample_join.py"]
     )
     assert result.exit_code == 0
 
@@ -104,7 +110,7 @@ def test_compile_group_by_deprecation():
     result = runner.invoke(
         extract_and_convert,
         [
-            "--chronon_root=test/sample",
+            "--chronon_root=api/py/test/sample",
             "--input_path=group_bys/sample_team/sample_deprecation_group_by.py",
             "--force-overwrite",
         ],
@@ -121,7 +127,7 @@ def test_compile_join_deprecation():
     result = runner.invoke(
         extract_and_convert,
         [
-            "--chronon_root=test/sample",
+            "--chronon_root=api/py/test/sample",
             "--input_path=joins/sample_team/sample_deprecation_join.py",
             "--force-overwrite",
         ],
@@ -135,7 +141,7 @@ def test_compile_join_deprecation():
 def test_debug_compile():
     runner = CliRunner()
     result = runner.invoke(
-        extract_and_convert, ["--chronon_root=test/sample", "--input_path=joins/sample_team/", "--debug"]
+        extract_and_convert, ["--chronon_root=api/py/test/sample", "--input_path=joins/sample_team/", "--debug"]
     )
     assert result.exit_code == 0
 
@@ -234,7 +240,7 @@ def test_detected_dependent_joins_materialized():
     runner = CliRunner()
     result = _invoke_cli_with_params(runner, "group_bys/sample_team/event_sample_group_by.py", ["--force-overwrite"])
     assert result.exit_code == 0
-    expected_message = "Successfully wrote 8 Join objects to test/sample/production".strip().lower()
+    expected_message = "Successfully wrote 8 Join objects to api/py/test/sample/production".strip().lower()
     actual_message = str(result.output).strip().lower()
     assert expected_message in actual_message, f"Got a different message than expected {actual_message}"
 
@@ -266,7 +272,7 @@ def test_detected_dependent_group_bys_materialized():
     runner = CliRunner()
     result = _invoke_cli_with_params(runner, "joins/unit_test/sample_parent_join.py", ["--force-overwrite"])
     assert result.exit_code == 0
-    expected_message = "Successfully wrote 2 GroupBy objects to test/sample/production".strip().lower()
+    expected_message = "Successfully wrote 2 GroupBy objects to api/py/test/sample/production".strip().lower()
     actual_message = str(result.output).strip().lower()
     assert expected_message in actual_message, f"Got a different message than expected {actual_message}"
 
@@ -280,7 +286,7 @@ def test_detected_dependent_nested_joins():
         runner, "group_bys/unit_test/user/sample_nested_group_by.py", ["--force-overwrite"]
     )
     assert result.exit_code == 0
-    expected_message = "Successfully wrote 1 Join objects to test/sample/production".strip().lower()
+    expected_message = "Successfully wrote 1 Join objects to api/py/test/sample/production".strip().lower()
     actual_message = str(result.output).strip().lower()
     assert expected_message in actual_message, f"Got a different message than expected {actual_message}"
 
@@ -341,7 +347,7 @@ def test_table_display_staging_query():
     result = runner.invoke(
         extract_and_convert,
         [
-            "--chronon_root=test/sample",
+            "--chronon_root=api/py/test/sample",
             f"--input_path={input_path}",
             "--table-display",
         ],
@@ -362,7 +368,34 @@ def test_compile_dependency_staging_query():
     input_path = f"staging_queries/sample_team/sample_staging_query.py"
     result = runner.invoke(
         extract_and_convert,
-        ["--chronon_root=test/sample", f"--input_path={input_path}"],
+        ["--chronon_root=api/py/test/sample", f"--input_path={input_path}"],
     )
 
     assert result.exit_code == 0
+
+
+def test_compile_inline_group_by():
+    # Test compiling an inline group by.
+    runner = CliRunner()
+    input_path = f"joins/unit_test/user/sample_join_inline_group_by.py"
+    result = runner.invoke(
+        extract_and_convert,
+        ["--chronon_root=api/py/test/sample", f"--input_path={input_path}"],
+    )
+    assert result.exit_code == 0
+
+    # Verify the inline group_by's team name is set correctly.
+    path = "sample/production/group_bys/unit_test/user_inline_group_by"
+    full_file_path = _get_full_file_path(path)
+    _assert_file_exists(full_file_path, f"Expected {os.path.basename(path)} to be materialized, but it was not.")
+    with open(full_file_path, "r") as file:
+        group_by = json2thrift(file.read(), GroupBy)
+        assert group_by.metaData.team == "unit_test"
+
+    path = "sample/production/joins/unit_test/user.sample_join_inline_group_by.v1"
+    full_file_path = _get_full_file_path(path)
+    _assert_file_exists(full_file_path, f"Expected {os.path.basename(path)} to be materialized, but it was not.")
+    with open(full_file_path, "r") as file:
+        join = json2thrift(file.read(), Join)
+        assert len(join.joinParts) == 1
+        assert join.joinParts[0].groupBy.metaData.team == "unit_test"

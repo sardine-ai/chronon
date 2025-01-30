@@ -32,7 +32,7 @@ import com.google.gson.Gson
 import java.util
 import scala.collection.JavaConverters._
 import scala.collection.Seq
-import scala.concurrent.Future
+import scala.concurrent.{ExecutionContext, Future}
 import scala.util.{Failure, Success, Try}
 
 // Does internal facing fetching
@@ -44,8 +44,9 @@ class FetcherBase(kvStore: KVStore,
                   timeoutMillis: Long = 10000,
                   debug: Boolean = false,
                   flagStore: FlagStore = null,
-                  disableErrorThrows: Boolean = false)
-    extends MetadataStore(kvStore, metaDataSet, timeoutMillis)
+                  disableErrorThrows: Boolean = false,
+                  executionContextOverride: ExecutionContext = null)
+    extends MetadataStore(kvStore, metaDataSet, timeoutMillis, executionContextOverride)
     with FetcherCache {
   import FetcherBase._
 
@@ -63,7 +64,7 @@ class FetcherBase(kvStore: KVStore,
                                        totalResponseValueBytes: Int,
                                        keys: Map[String, Any] // The keys are used only for caching
   ): Map[String, AnyRef] = {
-    val servingInfo = getServingInfo(oldServingInfo, batchResponses)
+    val (servingInfo, batchResponseMaxTs) = getServingInfo(oldServingInfo, batchResponses)
 
     // Batch metrics
     batchResponses match {
@@ -225,7 +226,11 @@ class FetcherBase(kvStore: KVStore,
         }
 
         val aggregatorStartTime = System.currentTimeMillis()
-        val result = aggregator.lambdaAggregateFinalized(batchIr, streamingRows.iterator, queryTimeMs, mutations)
+        val result = aggregator.lambdaAggregateFinalized(batchIr,
+                                                         streamingRows.iterator,
+                                                         queryTimeMs,
+                                                         mutations,
+                                                         batchResponseMaxTs)
         context.distribution("group_by.aggregator.latency.millis", System.currentTimeMillis() - aggregatorStartTime)
         result
       }
@@ -261,14 +266,18 @@ class FetcherBase(kvStore: KVStore,
     *
     * @param oldServingInfo The previous serving information before fetching the latest KV store data.
     * @param batchResponses the latest batch responses (either a fresh KV store response or a cached batch ir).
-    * @return the GroupByServingInfoParsed containing the latest serving information.
+    * @return A tuple that contains:
+    *  - the GroupByServingInfoParsed containing the latest serving information.
+    *  - the maximum ts from the batch IR responses. It will be later used for filtering the streaming rows after
+    *    this ts to avoid any potential duplicate records between the batch IR and streaming rows.
     */
   private[online] def getServingInfo(oldServingInfo: GroupByServingInfoParsed,
-                                     batchResponses: BatchResponses): GroupByServingInfoParsed = {
+                                     batchResponses: BatchResponses): (GroupByServingInfoParsed, Option[Long]) = {
     batchResponses match {
       case batchTimedValuesTry: KvStoreBatchResponse => {
-        val latestBatchValue: Try[TimedValue] = batchTimedValuesTry.response.map(_.maxBy(_.millis))
-        latestBatchValue.map(timedVal => updateServingInfo(timedVal.millis, oldServingInfo)).getOrElse(oldServingInfo)
+        val batchResponseMaxTs = batchTimedValuesTry.response.map(_.maxBy(_.millis)).toOption.map(_.millis)
+        val servingInfo = batchResponseMaxTs.map(ts => updateServingInfo(ts, oldServingInfo)).getOrElse(oldServingInfo)
+        (servingInfo, batchResponseMaxTs)
       }
       case _: CachedBatchResponse => {
         // If there was cached batch data, there's no point try to update the serving info; it would be the same.
@@ -278,7 +287,7 @@ class FetcherBase(kvStore: KVStore,
         // KV store to update the serving info. (See CHIP-1)
         getGroupByServingInfo.refresh(oldServingInfo.groupByOps.metaData.name)
 
-        oldServingInfo
+        (oldServingInfo, None)
       }
     }
   }
@@ -593,16 +602,17 @@ class FetcherBase(kvStore: KVStore,
       }
 
     val groupByRequests = joinDecomposed.flatMap {
-      case (_, gbTry) =>
+      case (request, gbTry) =>
+        val context = request.context.getOrElse(Metrics.Context(Metrics.Environment.JoinFetching, request.name))
         gbTry match {
           case Failure(ex) => {
             ex match {
               case _: InvalidEntityException =>
-                Metrics.Context(Metrics.Environment.JoinFetching).increment("fetch_invalid_join_failure.count")
+                context.increment("fetch_invalid_join_failure.count")
               case _: KeyMissingException =>
-                Metrics.Context(Metrics.Environment.JoinFetching).increment("fetch_missing_key_failure.count")
+                context.increment("fetch_missing_key_failure.count")
               case _: Exception =>
-                Metrics.Context(Metrics.Environment.JoinFetching).increment("fetch_join_failure.count")
+                context.increment("fetch_join_failure.count")
             }
             Iterator.empty
           }
@@ -621,6 +631,14 @@ class FetcherBase(kvStore: KVStore,
             val joinValuesTry = decomposedRequestsTry.map { groupByRequestsWithPrefix =>
               groupByRequestsWithPrefix.iterator.flatMap {
                 case Right(fetchException) => {
+                  val context =
+                    joinRequest.context.getOrElse(Metrics.Context(Metrics.Environment.JoinFetching, joinRequest.name))
+                  fetchException match {
+                    case ex: KeyMissingException =>
+                      context.increment("fetch_missing_key_failure.count")
+                    case ex: Exception =>
+                      context.incrementException(ex)
+                  }
                   Map(fetchException.getRequestName + "_exception" -> fetchException.getMessage)
                 }
                 case Left(PrefixedRequest(prefix, groupByRequest)) => {
