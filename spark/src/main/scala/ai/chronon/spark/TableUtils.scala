@@ -430,11 +430,15 @@ case class TableUtils(sparkSession: SparkSession) {
     val dataset = tableName.split("\\.")(0)
     val tableNameSuffix = tableName.split("\\.")(1)
 
+    // we use views to adapt our tables to chronon
+    // so we need this hack to get partitions
+    val tableNameCorrected = tableNameSuffix.stripSuffix("_vw")
+
     val getPartitionsSql = s"""SELECT CAST(PARSE_DATE('%Y%m%d', partition_id) AS STRING) as $partitionColumn
                            | FROM $dataset.INFORMATION_SCHEMA.PARTITIONS
                            | WHERE TABLE_SCHEMA = '$dataset'
-                           | AND TABLE_NAME = '$tableNameSuffix'
-                           | AND partition_id != '__NULL__'
+                           | AND TABLE_NAME = '$tableNameCorrected'
+                           | AND partition_id NOT IN ('__NULL__', '__UNPARTITIONED__')
                            | ORDER BY partition_id""".stripMargin
 
     logger.info(s"getPartitionsSql: $getPartitionsSql")
@@ -484,7 +488,7 @@ case class TableUtils(sparkSession: SparkSession) {
   }
 
   def getSchemaFromTable(tableName: String): StructType = {
-    val query = s"SELECT * FROM $tableName LIMIT 1"
+    val query = s"SELECT * FROM $tableName WHERE ds >= (select max(ds) from $tableName) LIMIT 1"
     sparkSession.read.format(sqlFormat).option("query", query).load().schema
   }
 
