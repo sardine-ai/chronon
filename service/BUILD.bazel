@@ -4,6 +4,7 @@ java_library(
     resources = [
         "src/main/resources/example_config.json",
         "src/main/resources/logback.xml",
+        "src/main/resources/log4j2.xml", # for some reason it's not using logback
     ],
     visibility = ["//visibility:public"],
     deps = [
@@ -21,6 +22,9 @@ java_library(
         maven_artifact("io.vertx:vertx-micrometer-metrics"),
         maven_artifact("org.slf4j:slf4j-api"),
         maven_artifact("org.slf4j:slf4j-log4j12"),
+        maven_artifact("ch.qos.logback:logback-classic"),
+        maven_artifact("io.netty:netty-all"),
+        maven_artifact("io.netty:netty-resolver-dns-native-macos")
     ],
 )
 
@@ -38,5 +42,13 @@ scala_test_suite(
         maven_artifact("io.vertx:vertx-unit"),
         maven_artifact("io.vertx:vertx-core"),
         maven_artifact("io.vertx:vertx-web"),
+    ],
+)
+
+java_binary(
+    name = "service-exec",
+    main_class = "ai.chronon.service.ChrononServiceLauncher",
+    runtime_deps = [
+        ":service",
     ],
 )

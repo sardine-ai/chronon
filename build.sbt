@@ -260,7 +260,8 @@ lazy val api = project
           "org.scala-lang.modules" %% "scala-collection-compat" % "2.6.0",
           "com.novocode" % "junit-interface" % "0.11" % "test",
           "org.scalatest" %% "scalatest" % "3.2.15" % "test",
-          "org.scalatestplus" %% "mockito-3-4" % "3.2.10.0" % "test"
+          "org.scalatestplus" %% "mockito-3-4" % "3.2.10.0" % "test",
+          "com.google.cloud" % "google-cloud-storage" % "2.42.0"
         ),
   )
 
@@ -402,8 +403,11 @@ val sparkBaseSettings: Seq[Setting[_]] = Seq(
   mainClass in (Compile, run) := Some("ai.chronon.spark.Driver"),
   cleanFiles ++= Seq(file(tmp_warehouse)),
   Test / testOptions += Tests.Setup(() => cleanSparkMeta()),
-  // compatibility for m1 chip laptop
-  libraryDependencies += "org.xerial.snappy" % "snappy-java" % "1.1.8.4" % Test
+  libraryDependencies ++= Seq(
+    "org.xerial.snappy" % "snappy-java" % "1.1.8.4" % Test, // compatibility for m1 chip laptop
+    "com.google.cloud" % "google-cloud-bigquery" % "2.42.2",
+    "redis.clients" % "jedis" % "5.1.3"
+  )
 ) ++ addArtifact(assembly / artifact, assembly) ++ publishSettings
 
 lazy val spark_uber = (project in file("spark"))
