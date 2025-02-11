@@ -1,0 +1,19 @@
+steps:
+  - name: 'gcr.io/cloud-builders/gsutil'
+    id: copy jar from bucket
+    args: ['cp', 'gs://sardine-internal-downloads/bigtable-online-impl-assembly-0.1.0-SNAPSHOT.jar', '/workspace']
+  - name: docker
+    env:
+      - "DOCKER_BUILDKIT=0"
+    entrypoint: sh
+    id: pull or build,push,tag docker image
+    args:
+      - -c
+      - |
+          docker build --network=cloudbuild \
+          -t $_ARTIFACT_REGISTRY_DOCKER_HOST/$_ARTIFACT_REGISTRY_DOCKER_PROJECT_ID/$_ARTIFACT_REGISTRY_DOCKER_REPO/$_ARTIFACT_REGISTRY_DOCKER_IMAGE_NAME:$TAG_NAME \
+          -f $_DOCKERFILE_PATH \
+          $_DOCKER_DEPLOYMENT_FOLDER
+
+          docker push $_ARTIFACT_REGISTRY_DOCKER_HOST/$_ARTIFACT_REGISTRY_DOCKER_PROJECT_ID/$_ARTIFACT_REGISTRY_DOCKER_REPO/$_ARTIFACT_REGISTRY_DOCKER_IMAGE_NAME:$TAG_NAME
+timeout: "1800s"
