@@ -1,12 +1,16 @@
 FROM gcr.io/bazel-public/bazel:latest as builder
 
-RUN sudo apt install -y wget
+USER root
+
+RUN apt install -y wget
 
 RUN wget https://archive.apache.org/dist/thrift/0.13.0/thrift-0.13.0.tar.gz && \
     tar -xvf thrift-0.13.0.tar.gz && \
     cd thrift-0.13.0 && \
-    sudo ./configure && \
-    sudo make install
+    ./configure && \
+    make install
+
+USER ubuntu
 
 RUN mkdir /build
 
