@@ -1,6 +1,6 @@
 FROM gcr.io/bazel-public/bazel:latest as builder
 
-RUN apt install -y wget
+RUN sudo apt install -y wget
 
 RUN wget https://archive.apache.org/dist/thrift/0.13.0/thrift-0.13.0.tar.gz && \
     tar -xvf thrift-0.13.0.tar.gz && \
