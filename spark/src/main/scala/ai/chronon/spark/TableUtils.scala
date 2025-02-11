@@ -418,7 +418,7 @@ case class TableUtils(sparkSession: SparkSession) {
     if (!tableExists(tableName)) return Seq.empty[String]
 
     if(sqlFormat == "bigquery") {
-      return getBigQueryPartitions(tableName, subPartitionsFilter, partitionColumn)
+      return getBigQueryPartitions(tableName, subPartitionsFilter)
     }
     
     val format = tableReadFormat(tableName)
@@ -426,31 +426,18 @@ case class TableUtils(sparkSession: SparkSession) {
 
   }
 
-  private def getBigQueryPartitions(tableName: String, subPartitionsFilter: Map[String, String] = Map.empty, partitionColumn: String = "ds"): Seq[String] = {
-    val dataset = tableName.split("\\.")(0)
-    val tableNameSuffix = tableName.split("\\.")(1)
+  private def getBigQueryPartitions(tableName: String, subPartitionsFilter: Map[String, String] = Map.empty): Seq[String] = {
 
-    // we use views to adapt our tables to chronon
-    // so we need this hack to get partitions
-    val tableNameCorrected = tableNameSuffix.stripSuffix("_vw")
+    val partitionsDf = sql(s"SELECT DISTINCT CAST($partitionColumn AS STRING) AS $partitionColumn FROM $tableName")
 
-    val getPartitionsSql = s"""SELECT CAST(PARSE_DATE('%Y%m%d', partition_id) AS STRING) as $partitionColumn
-                           | FROM $dataset.INFORMATION_SCHEMA.PARTITIONS
-                           | WHERE TABLE_SCHEMA = '$dataset'
-                           | AND TABLE_NAME = '$tableNameCorrected'
-                           | AND partition_id NOT IN ('__NULL__', '__UNPARTITIONED__')
-                           | ORDER BY partition_id""".stripMargin
-
-    logger.info(s"getPartitionsSql: $getPartitionsSql")
-    val partitionsDf = sparkSession.read.format("bigquery").option("query", getPartitionsSql).load()
-    
-    logger.info(s"Detected ${partitionsDf.count()} partitions for table $tableName")
-
-    partitionsDf
-      .select(partitionColumn)
+    val partitionValues = partitionsDf
       .collect()
       .map(_.getString(0))
       .toSeq
+
+    logger.info(s"Detected ${partitionValues.length} partitions for table $tableName")
+
+    partitionValues
   }
 
   // Given a table and a query extract the schema of the columns involved as input.
