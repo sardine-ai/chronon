@@ -1,0 +1,8 @@
+{
+    "online.jar": "/app/bigtable-online-impl-assembly-0.1.0-SNAPSHOT.jar",
+    "online.class": "ai.chronon.kvstore.BigtableOnlineImpl",
+    "online.api.props": {
+      "project_id": "indigo-computer-272415",
+      "instance_id": "data-features"
+    }
+  }
