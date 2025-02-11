@@ -22,7 +22,7 @@ WORKDIR /build
 
 RUN bazel build //service:service-exec_deploy.jar
 
-FROM eclipse-temurin:17-jdk-bookworm
+FROM eclipse-temurin:17-jdk-jammy
 
 COPY --from=builder /build/bazel-bin/service/service-exec_deploy.jar /app/service-exec_deploy.jar
 COPY bigtable-online-impl-assembly-0.1.0-SNAPSHOT.jar /app/bigtable-online-impl-assembly-0.1.0-SNAPSHOT.jar
