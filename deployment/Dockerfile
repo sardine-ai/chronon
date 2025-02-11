@@ -10,9 +10,9 @@ RUN wget https://archive.apache.org/dist/thrift/0.13.0/thrift-0.13.0.tar.gz && \
     ./configure && \
     make install
 
-USER ubuntu
-
 RUN mkdir /build
+
+USER ubuntu
 
 COPY . /build
 
