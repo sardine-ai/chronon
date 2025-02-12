@@ -84,7 +84,7 @@ enablePlugins(GitVersioning, GitBranchPrompt)
 lazy val supportedVersions = List(scala211, scala212, scala213)
 
 lazy val root = (project in file("."))
-  .aggregate(api, aggregator, online, spark_uber, spark_embedded, service, flink)
+  .aggregate(api, aggregator, online, spark_uber, spark_embedded, client, service, flink)
   .settings(
     publish / skip := true,
     crossScalaVersions := Nil,
@@ -448,8 +448,25 @@ lazy val flink = (project in file("flink"))
                                        "flink")
   )
 
-lazy val service = (project in file("service"))
+lazy val client = (project in file("client"))
   .dependsOn(online.%("compile->compile;test->test"))
+  .settings(
+    publishSettings,
+    crossScalaVersions := supportedVersions,
+    libraryDependencies ++= Seq(
+      "ch.qos.logback" % "logback-classic" % "1.2.3",
+      "org.slf4j" % "slf4j-api" % "1.7.32",
+      "com.google.cloud" % "google-cloud-bigtable" % "2.43.0",
+      "org.scalatest" %% "scalatest-flatspec" % "3.2.19" % "test",
+    ),
+    dependencyOverrides ++= Seq(
+      "com.fasterxml.jackson.module" % "jackson-module-scala_2.13" % "2.14.2",
+    ),
+    version := git.versionProperty.value
+  )
+
+lazy val service = (project in file("service"))
+  .dependsOn(client.%("compile->compile;test->test"))
   .settings(
     assembly / assemblyJarName := s"${name.value}-${version.value}.jar",
     assembly / artifact := {
