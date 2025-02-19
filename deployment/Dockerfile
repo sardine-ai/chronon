@@ -1,4 +1,4 @@
-FROM gcr.io/bazel-public/bazel:latest as builder
+FROM gcr.io/bazel-public/bazel:8.0.1 as builder
 
 USER root
 
@@ -22,7 +22,7 @@ WORKDIR /build
 
 RUN bazel build //service:service-exec_deploy.jar
 
-FROM eclipse-temurin:8-jre-jammy
+FROM eclipse-temurin:8-jdk-jammy
 
 COPY --from=builder /build/bazel-bin/service/service-exec_deploy.jar /app/service-exec_deploy.jar
 COPY bigtable-online-impl-assembly-0.1.0-SNAPSHOT.jar /app/bigtable-online-impl-assembly-0.1.0-SNAPSHOT.jar
