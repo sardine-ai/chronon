@@ -30,4 +30,4 @@ COPY service/src/main/resources/config.json /app/config.json
 
 WORKDIR /app
 
-CMD ["java", "-jar", "service-exec_deploy.jar", "run", "ai.chronon.service.WebServiceVerticle", "-Dserver.port=9000", "-conf", "/app/config.json"]
+CMD ["java", "-jar", "service-exec_deploy.jar", "run", "ai.chronon.service.WebServiceVerticle", "-Dserver.port=9005", "-conf", "/app/config.json"]
