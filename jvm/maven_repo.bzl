@@ -90,12 +90,12 @@ maven_repo = repo(
         "io.micrometer:micrometer-core:1.12.4",
         "io.micrometer:micrometer-registry-statsd:1.12.4",
         "io.netty:netty-all:4.1.111.Final",
-        "io.netty:netty-resolver-dns-native-macos:4.1.111.Final",
 
         # GCP specific dependencies
         "com.google.cloud:google-cloud-core:2.42.0",
         "com.google.cloud:google-cloud-storage:2.42.0",
         "com.google.cloud:google-cloud-bigquery:2.42.2",
+        "com.google.cloud:google-cloud-bigtable:2.43.0",
 
         # Redis
         "redis.clients:jedis:5.1.3",

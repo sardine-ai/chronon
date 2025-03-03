@@ -10,6 +10,7 @@ java_library(
     deps = [
         "//api:api-lib",
         "//online",
+        "//client",
         maven_artifact("com.fasterxml.jackson.core:jackson-annotations"),
         maven_artifact("com.fasterxml.jackson.core:jackson-core"),
         maven_artifact("com.fasterxml.jackson.core:jackson-databind"),
@@ -24,7 +25,6 @@ java_library(
         maven_artifact("org.slf4j:slf4j-log4j12"),
         maven_artifact("ch.qos.logback:logback-classic"),
         maven_artifact("io.netty:netty-all"),
-        maven_artifact("io.netty:netty-resolver-dns-native-macos")
     ],
 )
 
