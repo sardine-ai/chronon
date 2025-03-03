@@ -10,7 +10,6 @@ java_library(
     deps = [
         "//api:api-lib",
         "//online",
-        "//client",
         maven_artifact("com.fasterxml.jackson.core:jackson-annotations"),
         maven_artifact("com.fasterxml.jackson.core:jackson-core"),
         maven_artifact("com.fasterxml.jackson.core:jackson-databind"),

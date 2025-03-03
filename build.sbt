@@ -84,7 +84,7 @@ enablePlugins(GitVersioning, GitBranchPrompt)
 lazy val supportedVersions = List(scala211, scala212, scala213)
 
 lazy val root = (project in file("."))
-  .aggregate(api, aggregator, online, spark_uber, spark_embedded, client, service, flink)
+  .aggregate(api, aggregator, online, spark_uber, spark_embedded, service, flink)
   .settings(
     publish / skip := true,
     crossScalaVersions := Nil,
@@ -260,8 +260,7 @@ lazy val api = project
           "org.scala-lang.modules" %% "scala-collection-compat" % "2.6.0",
           "com.novocode" % "junit-interface" % "0.11" % "test",
           "org.scalatest" %% "scalatest" % "3.2.15" % "test",
-          "org.scalatestplus" %% "mockito-3-4" % "3.2.10.0" % "test",
-          "com.google.cloud" % "google-cloud-storage" % "2.42.0"
+          "org.scalatestplus" %% "mockito-3-4" % "3.2.10.0" % "test"
         ),
   )
 
@@ -448,25 +447,8 @@ lazy val flink = (project in file("flink"))
                                        "flink")
   )
 
-lazy val client = (project in file("client"))
-  .dependsOn(online.%("compile->compile;test->test"))
-  .settings(
-    publishSettings,
-    crossScalaVersions := supportedVersions,
-    libraryDependencies ++= Seq(
-      "ch.qos.logback" % "logback-classic" % "1.2.3",
-      "org.slf4j" % "slf4j-api" % "1.7.32",
-      "com.google.cloud" % "google-cloud-bigtable" % "2.43.0",
-      "org.scalatest" %% "scalatest-flatspec" % "3.2.19" % "test",
-    ),
-    dependencyOverrides ++= Seq(
-      "com.fasterxml.jackson.module" % "jackson-module-scala_2.13" % "2.14.2",
-    ),
-    version := git.versionProperty.value
-  )
-
 lazy val service = (project in file("service"))
-  .dependsOn(client.%("compile->compile;test->test"))
+  .dependsOn(online.%("compile->compile;test->test"))
   .settings(
     assembly / assemblyJarName := s"${name.value}-${version.value}.jar",
     assembly / artifact := {
@@ -497,6 +479,12 @@ lazy val service = (project in file("service"))
       // add codegen dep to help with mockito errors
       "io.vertx" % "vertx-codegen" % "4.5.10" % Test,
     ),
+
+    dependencyOverrides ++= Seq(
+      "com.google.protobuf" % "protobuf-java" % "3.25.4",
+      "com.google.guava" % "guava" % "32.1.3-jre"
+    ),
+
     // Assembly settings
     assembly / assemblyJarName := s"${name.value}-${version.value}.jar",
 
