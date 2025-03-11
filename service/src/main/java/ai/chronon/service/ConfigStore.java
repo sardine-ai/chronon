@@ -70,10 +70,11 @@ public class ConfigStore {
             return new HashMap<String, String>();
         }
 
-        return apiProps.stream().collect(Collectors.toMap(
+        Map<String, String> configMap = apiProps.stream().collect(Collectors.toMap(
                 Map.Entry::getKey,
-                e -> String.valueOf(e.getValue())
-        ));
+                e -> String.valueOf(e.getValue())));
+        configMap.put("project_id", System.getenv("PROJECT_ID"));
+        return configMap;
     }
 
     public String encodeConfig() {
