@@ -38,7 +38,8 @@ FROM eclipse-temurin:11-jre-jammy
 COPY --from=builder /build/service/target/scala-2.12/service.jar /app/service.jar
 COPY bigtable-online-impl-assembly-0.1.0-SNAPSHOT.jar /app/bigtable-online-impl-assembly-0.1.0-SNAPSHOT.jar
 COPY service/src/main/resources/config.json /app/config.json
+COPY deployment/entrypoint.sh /app/entrypoint.sh
 
 WORKDIR /app
 
-CMD ["java", "-jar", "service.jar", "run", "ai.chronon.service.WebServiceVerticle", "-Dserver.port=9000", "-conf", "/app/config.json"]
+ENTRYPOINT ["./entrypoint.sh"]
