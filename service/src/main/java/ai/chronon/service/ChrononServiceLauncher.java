@@ -26,6 +26,10 @@ public class ChrononServiceLauncher extends Launcher {
     @Override
     public void beforeStartingVertx(VertxOptions options) {
 
+        if (System.getenv("STATSD_ENABLED") == null || !System.getenv("STATSD_ENABLED").equals("true")) {
+            return;
+        }
+
         StatsdConfig config = new StatsdConfig() {
             private final String statsdHost = Metrics.Context$.MODULE$.statsHost();
             private final String statsdPort = String.valueOf(Metrics.Context$.MODULE$.statsPort());

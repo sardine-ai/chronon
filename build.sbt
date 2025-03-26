@@ -450,7 +450,7 @@ lazy val flink = (project in file("flink"))
 lazy val service = (project in file("service"))
   .dependsOn(online.%("compile->compile;test->test"))
   .settings(
-    assembly / assemblyJarName := s"${name.value}-${version.value}.jar",
+    assembly / assemblyJarName := "service.jar",
     assembly / artifact := {
       val art = (assembly / artifact).value
       art.withClassifier(Some("assembly"))
@@ -486,7 +486,7 @@ lazy val service = (project in file("service"))
     ),
 
     // Assembly settings
-    assembly / assemblyJarName := s"${name.value}-${version.value}.jar",
+    assembly / assemblyJarName := "service.jar",
 
     // Main class configuration
     // We use a custom launcher to help us wire up our statsd metrics
