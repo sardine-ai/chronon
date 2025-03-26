@@ -626,7 +626,7 @@ object Driver {
     }
 
     def run(args: Args): Unit = {
-      GroupByUpload.run(parseConf[api.GroupBy](args.confPath()), args.endDate())
+      GroupByUpload.run(parseConf[api.GroupBy](args.confPath()), args.endDate(), jsonPercent = 100)
     }
   }
 
