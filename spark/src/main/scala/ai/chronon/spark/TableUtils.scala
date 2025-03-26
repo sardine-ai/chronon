@@ -330,7 +330,7 @@ case class TableUtils(sparkSession: SparkSession) {
   val maxWait: Int = sparkSession.conf.get("spark.chronon.wait.hours", "48").toInt
 
   val sqlFormat: String = sparkSession.conf.get("spark.chronon.sql.format", "parquet")
-  val minWriteShuffleParallelism = 200
+  val minWriteShuffleParallelism = 10
 
   sparkSession.sparkContext.setLogLevel("ERROR")
   // converts String-s like "a=b/c=d" to Map("a" -> "b", "c" -> "d")
@@ -344,8 +344,7 @@ case class TableUtils(sparkSession: SparkSession) {
   if(sqlFormat == "bigquery") {
     sparkSession.conf.set("materializationDataset", sparkSession.conf.get("spark.materializationDataset"))
     sparkSession.conf.set("viewsEnabled", "true")
-    sparkSession.conf.set("bigQueryJobLabel.cost_center", "data-platform")
-    sparkSession.conf.set("bigQueryJobLabel.usage", "chronon")
+    sparkSession.conf.set("bigQueryJobLabel", "chronon")
   }
   // converts String-s like "a=b/c=d" to Map("a" -> "b", "c" -> "d")
   
@@ -368,7 +367,7 @@ case class TableUtils(sparkSession: SparkSession) {
       true
     } catch {
       case e: Exception => {
-        logger.info(s"Error message received when trying to get schema from table $tableName")
+        logger.info(s"Error message received when trying to get schema from table $tableName: ${e.getMessage}")
         logger.info(s"Assuming table $tableName does not exist")
         false
       }
@@ -475,7 +474,7 @@ case class TableUtils(sparkSession: SparkSession) {
   }
 
   def getSchemaFromTable(tableName: String): StructType = {
-    val query = s"SELECT * FROM $tableName WHERE ds >= (select max(ds) from $tableName) LIMIT 1"
+    val query = s"SELECT * FROM $tableName LIMIT 1"
     sparkSession.read.format(sqlFormat).option("query", query).load().schema
   }
 
@@ -531,7 +530,7 @@ case class TableUtils(sparkSession: SparkSession) {
                        tableName: String,
                        tableProperties: Map[String, String] = null,
                        partitionColumns: Seq[String] = Seq(partitionColumn),
-                       saveMode: SaveMode = SaveMode.Overwrite,
+                       saveMode: SaveMode = SaveMode.Append,
                        fileFormat: String = "PARQUET",
                        autoExpand: Boolean = false,
                        stats: Option[DfStats] = None,
@@ -639,7 +638,7 @@ case class TableUtils(sparkSession: SparkSession) {
   def insertUnPartitioned(df: DataFrame,
                           tableName: String,
                           tableProperties: Map[String, String] = null,
-                          saveMode: SaveMode = SaveMode.Overwrite,
+                          saveMode: SaveMode = SaveMode.Append,
                           fileFormat: String = "PARQUET"): Unit = {
 
     if (!tableExists(tableName)) {
@@ -745,17 +744,6 @@ case class TableUtils(sparkSession: SparkSession) {
       val dailyFileCountBounded =
         math.max(math.min(dailyFileCountEstimate, dailyFileCountUpperBound), dailyFileCountLowerBound)
 
-      logger.info(
-        s"""
-           |Calculating partitions.
-           |rowCount: $rowCount
-           |rowCountPerPartition: $rowCountPerPartition
-           |columnSizeEstimate: $columnSizeEstimate
-           |nonZeroTablePartitionCount: $nonZeroTablePartitionCount
-           |dailyFileCountEstimate: $dailyFileCountEstimate
-           |dailyFileCountBounded: $dailyFileCountBounded
-           |""".stripMargin)
-
       val outputParallelism = df.sparkSession.conf
         .getOption(SparkConstants.ChrononOutputParallelismOverride)
         .map(_.toInt)
@@ -768,6 +756,21 @@ case class TableUtils(sparkSession: SparkSession) {
 
       // finalized shuffle parallelism
       val shuffleParallelism = Math.max(dailyFileCount * nonZeroTablePartitionCount, minWriteShuffleParallelism)
+
+      logger.info(
+        s"""
+           |Calculating partitions.
+           |rowCount: $rowCount
+           |rowCountPerPartition: $rowCountPerPartition
+           |columnSizeEstimate: $columnSizeEstimate
+           |nonZeroTablePartitionCount: $nonZeroTablePartitionCount
+           |totalFileCountEstimate: $totalFileCountEstimate
+           |dailyFileCountEstimate: $dailyFileCountEstimate
+           |dailyFileCountBounded: $dailyFileCountBounded
+           |dailyFileCount: $dailyFileCount
+           |shuffleParallelism: $shuffleParallelism
+           |""".stripMargin)
+
       val saltCol = "random_partition_salt"
       val saltedDf = df.withColumn(saltCol, round(rand() * (dailyFileCount + 1)))
 
