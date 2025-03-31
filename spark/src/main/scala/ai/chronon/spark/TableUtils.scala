@@ -427,7 +427,7 @@ case class TableUtils(sparkSession: SparkSession) {
 
   private def getBigQueryPartitions(tableName: String, subPartitionsFilter: Map[String, String] = Map.empty): Seq[String] = {
 
-    val partitionsDf = sql(s"SELECT DISTINCT CAST($partitionColumn AS STRING) AS $partitionColumn FROM $tableName")
+    val partitionsDf = sql(s"SELECT DISTINCT CAST($partitionColumn AS STRING) AS $partitionColumn FROM $tableName WHERE $partitionColumn >= CURRENT_DATE - 365")
 
     val partitionValues = partitionsDf
       .collect()
@@ -474,7 +474,7 @@ case class TableUtils(sparkSession: SparkSession) {
   }
 
   def getSchemaFromTable(tableName: String): StructType = {
-    val query = s"SELECT * FROM $tableName LIMIT 1"
+    val query = s"SELECT * FROM $tableName WHERE $partitionColumn > CURRENT_DATE - 2 LIMIT 1"
     sparkSession.read.format(sqlFormat).option("query", query).load().schema
   }
 
