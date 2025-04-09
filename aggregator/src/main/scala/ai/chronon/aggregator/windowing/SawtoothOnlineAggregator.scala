@@ -51,11 +51,13 @@ class SawtoothOnlineAggregator(val batchEndTs: Long,
 
   val batchTailTs: Array[Option[Long]] = tailTs(batchEndTs)
 
-  logger.info(s"Batch End: ${TsUtils.toStr(batchEndTs)}")
-  logger.info("Window Tails: ")
+  private var debugMsg = s"Batch End: ${TsUtils.toStr(batchEndTs)}"
+  debugMsg += "\nWindow Tails: "
   for (i <- windowMappings.indices) {
-    logger.info(s"  ${windowMappings(i).aggregationPart.outputColumnName} -> ${batchTailTs(i).map(TsUtils.toStr)}")
+    debugMsg += s"\n  ${windowMappings(i).aggregationPart.outputColumnName} -> ${batchTailTs(i).map(TsUtils.toStr)}"
   }
+
+  logger.debug(debugMsg)
 
   def update(batchIr: BatchIr, row: Row): BatchIr = update(batchEndTs, batchIr, row, batchTailTs)
 
