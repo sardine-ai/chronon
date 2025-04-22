@@ -361,16 +361,26 @@ case class TableUtils(sparkSession: SparkSession) {
       rdd
     }
 
-  def tableExists(tableName: String): Boolean = {
+  def tableExists(fullTableName: String): Boolean = {
     try {
-      getSchemaFromTable(tableName)
-      true
-    } catch {
-      case e: Exception => {
-        logger.info(s"Error message received when trying to get schema from table $tableName: ${e.getMessage}")
-        logger.info(s"Assuming table $tableName does not exist")
-        false
+      val parts = fullTableName.split("\\.")
+      if (parts.length != 2) {
+        logger.warn(s"Invalid table name format: $fullTableName. Expected format: 'dataset.table_name'")
+        return false
       }
+
+      val datasetId = parts(0)
+      val tableId = parts(1)
+
+      val bigquery = BigQueryOptions.getDefaultInstance.getService
+      val table = bigquery.getTable(datasetId, tableId)
+      val result = table != null
+      logger.info(s"Table $tableId exists: $result")
+      return result
+    } catch {
+      case e: Exception =>
+        logger.warn(s"Error checking if table exists: ${e.getMessage}")
+        false
     }
   }
 
