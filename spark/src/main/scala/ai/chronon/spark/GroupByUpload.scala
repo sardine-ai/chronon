@@ -29,6 +29,7 @@ import org.apache.spark.rdd.RDD
 import org.apache.spark.sql.functions.{col, lit, not}
 import org.apache.spark.sql.{Row, SparkSession, types}
 
+import java.lang.String.format
 import scala.annotation.tailrec
 import scala.collection.Seq
 import scala.util.ScalaJavaConversions.{ListOps, MapOps}
@@ -236,20 +237,29 @@ object GroupByUpload {
       .withColumn("ds", lit(endDs))
       .saveUnPartitioned(groupByConf.metaData.uploadTable, groupByConf.metaData.tableProps)
 
-    val kvDfReloaded = tableUtils.sparkSession
-      .table(groupByConf.metaData.uploadTable)
-      .where(not(col("key_json").eqNullSafe(Constants.GroupByServingInfoKey)))
+    // Although it seems spark-bigquery-connector added support for eqNullSafe filter
+    // it is still not working even in version 0.41.0
+    // so I'm simplifying the query. Plus the dialect is slightly different to get the length in bytes
+    val sqlGetAllButServingInfo = s"""
+      SELECT
+        SUM(LENGTH(key_bytes)),
+        SUM(LENGTH(value_bytes)),
+        COUNT(*)
+      FROM
+        ${groupByConf.metaData.uploadTable}
+      WHERE
+        NOT (COALESCE(key_json, '') = '${Constants.GroupByServingInfoKey}')
+    """
 
-    val metricRow =
-      kvDfReloaded.selectExpr("sum(bit_length(key_bytes))/8", "sum(bit_length(value_bytes))/8", "count(*)").collect()
+    val metricRow = tableUtils.sql(sqlGetAllButServingInfo).collect()
 
     val rowCount = metricRow(0).getLong(2)
     context.gauge(Metrics.Name.RowCount, rowCount)
     // Allow for upload data to be empty so that we can still update the GroupByServingInfo
     // TODO: in the long run, consider separating GroupByServingInfo into a separate job
     if (rowCount > 0) {
-      context.gauge(Metrics.Name.KeyBytes, metricRow(0).getDouble(0).toLong)
-      context.gauge(Metrics.Name.ValueBytes, metricRow(0).getDouble(1).toLong)
+      context.gauge(Metrics.Name.KeyBytes, metricRow(0).getLong(0))
+      context.gauge(Metrics.Name.ValueBytes, metricRow(0).getLong(1))
     } else {
       logger.warn(s"Empty upload for ${groupByConf.metaData.name} at $endDs")
     }

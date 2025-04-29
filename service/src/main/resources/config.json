@@ -1,0 +1,7 @@
+{
+    "online.jar": "/app/bigtable-online-impl-assembly-0.1.0-SNAPSHOT.jar",
+    "online.class": "ai.chronon.kvstore.BigtableOnlineImpl",
+    "online.api.props": {
+      "instance_id": "data-features"
+    }
+  }

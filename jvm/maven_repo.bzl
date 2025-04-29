@@ -90,6 +90,13 @@ maven_repo = repo(
         "io.micrometer:micrometer-core:1.12.4",
         "io.micrometer:micrometer-registry-statsd:1.12.4",
 
+        # GCP specific dependencies
+        "com.google.cloud:google-cloud-core:2.42.0",
+        "com.google.cloud:google-cloud-bigquery:2.42.2",
+
+        # Redis
+        "redis.clients:jedis:5.1.3",
+
         # Proto
         "com.google.protobuf:protobuf-java:3.21.7",
 
