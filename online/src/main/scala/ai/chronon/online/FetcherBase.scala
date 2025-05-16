@@ -491,6 +491,9 @@ class FetcherBase(kvStore: KVStore,
                 } catch {
                   case ex: Exception =>
                     // not all exceptions are due to stale schema, so we want to control how often we hit kv store
+                    logger.error(
+                      s"Failed to construct groupBy response for ${groupByServingInfo.groupByOps.metaData.getName} " +
+                        s"for keys: ${request.keys} with exception: ${ex.getMessage}")
                     getGroupByServingInfo.refresh(groupByServingInfo.groupByOps.metaData.name)
                     context.incrementException(ex)
                     ex.printStackTrace()
